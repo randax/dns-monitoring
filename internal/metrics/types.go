@@ -70,27 +70,3 @@ type MetricsPeriod struct {
 	Start time.Time
 	End   time.Time
 }
-
-type MetricsConfig struct {
-	Enabled              bool
-	WindowDuration       time.Duration
-	MaxStoredResults     int
-	CalculationInterval  time.Duration
-	EnabledMetrics       []string
-	PercentilePrecision  int
-	RateWindowSizes      []time.Duration
-	ThroughputSmoothing  bool
-}
-
-func DefaultMetricsConfig() *MetricsConfig {
-	return &MetricsConfig{
-		Enabled:             true,
-		WindowDuration:      15 * time.Minute,
-		MaxStoredResults:    100000,
-		CalculationInterval: 10 * time.Second,
-		EnabledMetrics:      []string{"latency", "rates", "throughput", "distribution"},
-		PercentilePrecision: 3,
-		RateWindowSizes:     []time.Duration{1 * time.Minute, 5 * time.Minute, 15 * time.Minute},
-		ThroughputSmoothing: true,
-	}
-}
