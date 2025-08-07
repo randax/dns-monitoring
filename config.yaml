@@ -8,26 +8,48 @@ dns:
     - name: "Google Primary"
       address: "8.8.8.8"
       port: 53
+      protocol: "udp"  # Options: udp, tcp, dot, doh
       enabled: true
     
     - name: "Google Secondary"
       address: "8.8.4.4"
       port: 53
+      protocol: "tcp"  # Using TCP protocol
       enabled: true
     
     - name: "Cloudflare Primary"
       address: "1.1.1.1"
       port: 53
+      protocol: "udp"
       enabled: true
     
-    - name: "Cloudflare Secondary"
-      address: "1.0.0.1"
-      port: 53
+    - name: "Cloudflare DoT"
+      address: "1.1.1.1"
+      port: 853  # DNS over TLS uses port 853
+      protocol: "dot"
+      insecure_skip_verify: false  # Set to true to skip TLS certificate verification
+      enabled: true
+    
+    - name: "Cloudflare DoH"
+      address: "https://cloudflare-dns.com"
+      port: 443
+      protocol: "doh"
+      doh_endpoint: "/dns-query"  # Optional, defaults to /dns-query
+      insecure_skip_verify: false  # Set to true to skip TLS certificate verification
+      enabled: true
+    
+    - name: "Google DoH"
+      address: "https://dns.google"
+      port: 443
+      protocol: "doh"
+      doh_endpoint: "/dns-query"
+      insecure_skip_verify: false  # Set to true to skip TLS certificate verification
       enabled: false
     
     - name: "Quad9"
       address: "9.9.9.9"
       port: 53
+      protocol: "udp"
       enabled: false
 
   # Query configuration

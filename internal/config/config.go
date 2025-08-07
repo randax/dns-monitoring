@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -27,10 +28,13 @@ type DNSConfig struct {
 }
 
 type DNSServer struct {
-	Name    string `yaml:"name"`
-	Address string `yaml:"address"`
-	Port    int    `yaml:"port"`
-	Enabled bool   `yaml:"enabled"`
+	Name               string `yaml:"name"`
+	Address            string `yaml:"address"`
+	Port               int    `yaml:"port"`
+	Enabled            bool   `yaml:"enabled"`
+	Protocol           string `yaml:"protocol,omitempty"`
+	DoHEndpoint        string `yaml:"doh_endpoint,omitempty"`
+	InsecureSkipVerify bool   `yaml:"insecure_skip_verify,omitempty"`
 }
 
 type QueryConfig struct {
@@ -91,16 +95,18 @@ func defaultConfig() *Config {
 		DNS: DNSConfig{
 			Servers: []DNSServer{
 				{
-					Name:    "Google DNS",
-					Address: "8.8.8.8",
-					Port:    53,
-					Enabled: true,
+					Name:     "Google DNS",
+					Address:  "8.8.8.8",
+					Port:     53,
+					Enabled:  true,
+					Protocol: "udp",
 				},
 				{
-					Name:    "Cloudflare DNS",
-					Address: "1.1.1.1",
-					Port:    53,
-					Enabled: true,
+					Name:     "Cloudflare DNS",
+					Address:  "1.1.1.1",
+					Port:     53,
+					Enabled:  true,
+					Protocol: "udp",
 				},
 			},
 			Queries: QueryConfig{
@@ -132,12 +138,42 @@ func (c *Config) validate() error {
 		return fmt.Errorf("at least one DNS server must be configured")
 	}
 
-	for i, server := range c.DNS.Servers {
+	for i := range c.DNS.Servers {
+		server := &c.DNS.Servers[i]
 		if server.Address == "" {
 			return fmt.Errorf("DNS server %d: address is required", i)
 		}
 		if server.Port <= 0 || server.Port > 65535 {
 			return fmt.Errorf("DNS server %d: invalid port %d", i, server.Port)
+		}
+		if server.Protocol != "" {
+			switch server.Protocol {
+			case "udp", "tcp", "dot", "doh":
+			default:
+				return fmt.Errorf("DNS server %d: invalid protocol %s (must be udp, tcp, dot, or doh)", i, server.Protocol)
+			}
+			
+			if server.Protocol == "doh" {
+				if server.DoHEndpoint == "" {
+					server.DoHEndpoint = "/dns-query"
+				}
+				
+				if !strings.HasPrefix(server.DoHEndpoint, "/") {
+					return fmt.Errorf("DNS server %d: DoH endpoint must start with '/', got %s", i, server.DoHEndpoint)
+				}
+				
+				if strings.Contains(server.DoHEndpoint, "//") {
+					return fmt.Errorf("DNS server %d: DoH endpoint contains invalid double slashes: %s", i, server.DoHEndpoint)
+				}
+				
+				if strings.Contains(server.DoHEndpoint, " ") {
+					return fmt.Errorf("DNS server %d: DoH endpoint cannot contain spaces: %s", i, server.DoHEndpoint)
+				}
+				
+				if !strings.HasPrefix(server.Address, "http://") && !strings.HasPrefix(server.Address, "https://") {
+					server.Address = "https://" + server.Address
+				}
+			}
 		}
 	}
 
