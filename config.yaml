@@ -1,0 +1,92 @@
+# DNS Monitoring Configuration File
+# This file configures the DNS monitoring tool behavior
+
+# DNS Configuration
+dns:
+  # List of DNS servers to monitor
+  servers:
+    - name: "Google Primary"
+      address: "8.8.8.8"
+      port: 53
+      enabled: true
+    
+    - name: "Google Secondary"
+      address: "8.8.4.4"
+      port: 53
+      enabled: true
+    
+    - name: "Cloudflare Primary"
+      address: "1.1.1.1"
+      port: 53
+      enabled: true
+    
+    - name: "Cloudflare Secondary"
+      address: "1.0.0.1"
+      port: 53
+      enabled: false
+    
+    - name: "Quad9"
+      address: "9.9.9.9"
+      port: 53
+      enabled: false
+
+  # Query configuration
+  queries:
+    # DNS record types to query
+    types:
+      - "A"
+      - "AAAA"
+      - "MX"
+      - "TXT"
+      - "NS"
+      - "CNAME"
+    
+    # Domains to test DNS resolution
+    domains:
+      - "example.com"
+      - "google.com"
+      - "cloudflare.com"
+      - "github.com"
+      - "stackoverflow.com"
+    
+    # Query timeout in seconds
+    timeout: 5s
+    
+    # Number of retries for failed queries
+    retries: 3
+
+# Monitoring Configuration
+monitor:
+  # Interval between monitoring cycles
+  interval: 30s
+  
+  # Maximum concurrent DNS queries
+  max_concurrent: 10
+  
+  # Number of consecutive failures before alerting
+  alert_threshold: 3
+
+# Output Configuration
+output:
+  # Output format: json, text, or csv
+  format: "json"
+  
+  # Log file path (optional)
+  file: "dns-monitor.log"
+  
+  # Enable console output
+  console: true
+  
+  # Buffer size for output queue
+  buffer_size: 1000
+  
+  # Metrics configuration
+  metrics:
+    # Enable metrics export
+    enabled: false
+    
+    # Metrics endpoint (for Prometheus)
+    endpoint: "http://localhost:9090/metrics"
+    
+    # Metrics push interval in seconds
+    interval: 60
