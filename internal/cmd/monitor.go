@@ -10,10 +10,10 @@ import (
 	"syscall"
 	"time"
 
-	"dns-monitoring/internal/config"
-	"dns-monitoring/internal/dns"
-	"dns-monitoring/internal/exporters"
-	"dns-monitoring/internal/metrics"
+	"github.com/randax/dns-monitoring/internal/config"
+	"github.com/randax/dns-monitoring/internal/dns"
+	"github.com/randax/dns-monitoring/internal/exporters"
+	"github.com/randax/dns-monitoring/internal/metrics"
 	"github.com/spf13/cobra"
 )
 
@@ -79,7 +79,6 @@ func newMonitorCmd() *cobra.Command {
 			
 			engine := dns.NewEngine(cfg)
 			
-			var err error
 			if continuous {
 				if rawOutput {
 					err = runContinuous(ctx, engine, cfg)
@@ -157,6 +156,24 @@ func runContinuous(ctx context.Context, engine *dns.Engine, cfg *config.Config) 
 }
 
 func runOnceWithMetrics(ctx context.Context, engine *dns.Engine, cfg *config.Config, collector *metrics.Collector, formatter *exporters.CLIFormatter) error {
+	// Initialize Zabbix exporter if enabled
+	var zabbixExporter *exporters.ZabbixExporter
+	if cfg.Metrics.Export.Zabbix.Enabled {
+		var err error
+		zabbixExporter, err = exporters.NewZabbixExporter(cfg.Metrics.Export.Zabbix, collector)
+		if err != nil {
+			return fmt.Errorf("failed to create Zabbix exporter: %w", err)
+		}
+		if err := zabbixExporter.Start(); err != nil {
+			return fmt.Errorf("failed to start Zabbix exporter: %w", err)
+		}
+		defer func() {
+			if err := zabbixExporter.Stop(); err != nil {
+				fmt.Printf("Error stopping Zabbix exporter: %v\n", err)
+			}
+		}()
+	}
+	
 	results, err := engine.Run(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to run DNS queries: %w", err)
@@ -173,6 +190,24 @@ func runOnceWithMetrics(ctx context.Context, engine *dns.Engine, cfg *config.Con
 }
 
 func runContinuousWithMetrics(ctx context.Context, engine *dns.Engine, cfg *config.Config, collector *metrics.Collector, formatter *exporters.CLIFormatter) error {
+	// Initialize Zabbix exporter if enabled
+	var zabbixExporter *exporters.ZabbixExporter
+	if cfg.Metrics.Export.Zabbix.Enabled {
+		var err error
+		zabbixExporter, err = exporters.NewZabbixExporter(cfg.Metrics.Export.Zabbix, collector)
+		if err != nil {
+			return fmt.Errorf("failed to create Zabbix exporter: %w", err)
+		}
+		if err := zabbixExporter.Start(); err != nil {
+			return fmt.Errorf("failed to start Zabbix exporter: %w", err)
+		}
+		defer func() {
+			if err := zabbixExporter.Stop(); err != nil {
+				fmt.Printf("Error stopping Zabbix exporter: %v\n", err)
+			}
+		}()
+	}
+	
 	queryTicker := time.NewTicker(cfg.Monitor.Interval)
 	defer queryTicker.Stop()
 	
@@ -227,7 +262,7 @@ func runContinuousWithMetrics(ctx context.Context, engine *dns.Engine, cfg *conf
 			return nil
 		case <-displayTicker.C:
 			m := collector.GetMetrics()
-			if m.TotalQueries > 0 {
+			if m != nil && m.Rates.TotalQueries > 0 {
 				layout := exporters.NewLayout(exporters.LayoutDashboard, formatter.Terminal())
 				fmt.Print(layout.Render(m, prevMetrics))
 				prevMetrics = m

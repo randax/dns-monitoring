@@ -64,9 +64,10 @@ func (f *CLIFormatter) FormatSummary(m *metrics.Metrics) string {
 
 	sb.WriteString(f.terminal.Bold("\n=== DNS Monitoring Summary ===\n\n"))
 
-	sb.WriteString(fmt.Sprintf("Monitoring Duration: %s\n", f.formatDuration(m.Duration)))
-	sb.WriteString(fmt.Sprintf("Total Queries: %s\n", f.formatNumber(m.TotalQueries)))
-	sb.WriteString(fmt.Sprintf("Total Errors: %s\n", f.formatNumber(m.TotalErrors)))
+	duration := m.Period.End.Sub(m.Period.Start)
+	sb.WriteString(fmt.Sprintf("Monitoring Duration: %s\n", f.formatDuration(duration)))
+	sb.WriteString(fmt.Sprintf("Total Queries: %s\n", f.formatNumber(m.Rates.TotalQueries)))
+	sb.WriteString(fmt.Sprintf("Total Errors: %s\n", f.formatNumber(m.Rates.ErrorQueries)))
 	sb.WriteString("\n")
 
 	f.formatLatencyMetrics(&sb, m)
@@ -80,18 +81,19 @@ func (f *CLIFormatter) FormatSummary(m *metrics.Metrics) string {
 func (f *CLIFormatter) formatHeader(sb *strings.Builder, m *metrics.Metrics) {
 	sb.WriteString(f.terminal.Clear())
 	sb.WriteString(f.terminal.Bold("DNS Monitoring Dashboard\n"))
+	duration := m.Period.End.Sub(m.Period.Start)
 	sb.WriteString(fmt.Sprintf("Updated: %s | Duration: %s\n",
 		time.Now().Format("15:04:05"),
-		f.formatDuration(m.Duration)))
+		f.formatDuration(duration)))
 	sb.WriteString(strings.Repeat("-", 60) + "\n\n")
 }
 
 func (f *CLIFormatter) formatFooter(sb *strings.Builder, m *metrics.Metrics) {
 	sb.WriteString("\n" + strings.Repeat("-", 60) + "\n")
 	sb.WriteString(fmt.Sprintf("Total Queries: %s | Errors: %s | Success Rate: %.2f%%\n",
-		f.formatNumber(m.TotalQueries),
-		f.formatNumber(m.TotalErrors),
-		m.SuccessRate*100))
+		f.formatNumber(m.Rates.TotalQueries),
+		f.formatNumber(m.Rates.ErrorQueries),
+		m.Rates.SuccessRate))
 }
 
 func (f *CLIFormatter) formatLatencyMetrics(sb *strings.Builder, m *metrics.Metrics) {
@@ -103,10 +105,10 @@ func (f *CLIFormatter) formatLatencyMetrics(sb *strings.Builder, m *metrics.Metr
 		warn  time.Duration
 		crit  time.Duration
 	}{
-		{"  P50 ", m.LatencyP50, 50 * time.Millisecond, 100 * time.Millisecond},
-		{"  P95 ", m.LatencyP95, 100 * time.Millisecond, 200 * time.Millisecond},
-		{"  P99 ", m.LatencyP99, 200 * time.Millisecond, 500 * time.Millisecond},
-		{"  P999", m.LatencyP999, 500 * time.Millisecond, 1000 * time.Millisecond},
+		{"  P50 ", time.Duration(m.Latency.P50 * float64(time.Millisecond)), 50 * time.Millisecond, 100 * time.Millisecond},
+		{"  P95 ", time.Duration(m.Latency.P95 * float64(time.Millisecond)), 100 * time.Millisecond, 200 * time.Millisecond},
+		{"  P99 ", time.Duration(m.Latency.P99 * float64(time.Millisecond)), 200 * time.Millisecond, 500 * time.Millisecond},
+		{"  P999", time.Duration(m.Latency.P999 * float64(time.Millisecond)), 500 * time.Millisecond, 1000 * time.Millisecond},
 	}
 
 	for _, l := range latencyData {
@@ -127,9 +129,9 @@ func (f *CLIFormatter) formatLatencyMetrics(sb *strings.Builder, m *metrics.Metr
 	}
 
 	if f.DetailedView {
-		sb.WriteString(fmt.Sprintf("  Min : %s\n", f.formatDuration(m.MinLatency)))
-		sb.WriteString(fmt.Sprintf("  Max : %s\n", f.formatDuration(m.MaxLatency)))
-		sb.WriteString(fmt.Sprintf("  Avg : %s\n", f.formatDuration(m.AvgLatency)))
+		sb.WriteString(fmt.Sprintf("  Min : %s\n", f.formatDuration(time.Duration(m.Latency.Min * float64(time.Millisecond)))))
+		sb.WriteString(fmt.Sprintf("  Max : %s\n", f.formatDuration(time.Duration(m.Latency.Max * float64(time.Millisecond)))))
+		sb.WriteString(fmt.Sprintf("  Avg : %s\n", f.formatDuration(time.Duration(m.Latency.Mean * float64(time.Millisecond)))))
 	}
 	sb.WriteString("\n")
 }
@@ -137,8 +139,8 @@ func (f *CLIFormatter) formatLatencyMetrics(sb *strings.Builder, m *metrics.Metr
 func (f *CLIFormatter) formatSuccessMetrics(sb *strings.Builder, m *metrics.Metrics) {
 	sb.WriteString(f.terminal.Bold("Success Metrics:\n"))
 
-	successRate := m.SuccessRate * 100
-	errorRate := m.ErrorRate * 100
+	successRate := m.Rates.SuccessRate
+	errorRate := m.Rates.ErrorRate
 
 	successColor := f.terminal.Green
 	if successRate < 95 {
@@ -157,37 +159,51 @@ func (f *CLIFormatter) formatSuccessMetrics(sb *strings.Builder, m *metrics.Metr
 	}
 
 	if f.DetailedView {
-		sb.WriteString(fmt.Sprintf("  Total Success: %s\n", f.formatNumber(m.TotalQueries-m.TotalErrors)))
-		sb.WriteString(fmt.Sprintf("  Total Errors : %s\n", f.formatNumber(m.TotalErrors)))
+		sb.WriteString(fmt.Sprintf("  Total Success: %s\n", f.formatNumber(m.Rates.SuccessQueries)))
+		sb.WriteString(fmt.Sprintf("  Total Errors : %s\n", f.formatNumber(m.Rates.ErrorQueries)))
 	}
 	sb.WriteString("\n")
 }
 
 func (f *CLIFormatter) formatThroughputMetrics(sb *strings.Builder, m *metrics.Metrics) {
 	sb.WriteString(f.terminal.Bold("Throughput:\n"))
-	sb.WriteString(fmt.Sprintf("  Current QPS: %s\n", f.formatQPS(m.CurrentQPS)))
-	sb.WriteString(fmt.Sprintf("  Average QPS: %s\n", f.formatQPS(m.AvgQPS)))
-	sb.WriteString(fmt.Sprintf("  Peak QPS   : %s\n", f.formatQPS(m.PeakQPS)))
+	sb.WriteString(fmt.Sprintf("  Current QPS: %s\n", f.formatQPS(m.Throughput.CurrentQPS)))
+	sb.WriteString(fmt.Sprintf("  Average QPS: %s\n", f.formatQPS(m.Throughput.AverageQPS)))
+	sb.WriteString(fmt.Sprintf("  Peak QPS   : %s\n", f.formatQPS(m.Throughput.PeakQPS)))
 	sb.WriteString("\n")
 }
 
 func (f *CLIFormatter) formatResponseCodeDistribution(sb *strings.Builder, m *metrics.Metrics) {
-	if len(m.ResponseCodeDist) == 0 {
+	if m.ResponseCode.Total == 0 {
 		return
 	}
 
 	sb.WriteString(f.terminal.Bold("Response Codes:\n"))
-	for code, count := range m.ResponseCodeDist {
-		percentage := float64(count) / float64(m.TotalQueries) * 100
-		codeStr := f.getResponseCodeString(code)
+	
+	responseCodes := map[string]int64{
+		"NoError":  m.ResponseCode.NoError,
+		"NXDomain": m.ResponseCode.NXDomain,
+		"ServFail": m.ResponseCode.ServFail,
+		"FormErr":  m.ResponseCode.FormErr,
+		"NotImpl":  m.ResponseCode.NotImpl,
+		"Refused":  m.ResponseCode.Refused,
+		"Other":    m.ResponseCode.Other,
+	}
+	
+	for code, count := range responseCodes {
+		if count == 0 {
+			continue
+		}
+		percentage := float64(count) / float64(m.ResponseCode.Total) * 100
+		codeStr := code
 		
 		if f.ShowColors {
-			if code == 0 {
+			if code == "NoError" {
 				codeStr = f.terminal.Green(codeStr)
-			} else if code == 2 {
-				codeStr = f.terminal.Yellow(codeStr)
-			} else if code == 3 {
+			} else if code == "ServFail" {
 				codeStr = f.terminal.Red(codeStr)
+			} else if code == "NXDomain" {
+				codeStr = f.terminal.Yellow(codeStr)
 			}
 		}
 		
@@ -197,13 +213,29 @@ func (f *CLIFormatter) formatResponseCodeDistribution(sb *strings.Builder, m *me
 }
 
 func (f *CLIFormatter) formatQueryTypeDistribution(sb *strings.Builder, m *metrics.Metrics) {
-	if len(m.QueryTypeDist) == 0 {
+	if m.QueryType.Total == 0 {
 		return
 	}
 
 	sb.WriteString(f.terminal.Bold("Query Types:\n"))
-	for qtype, count := range m.QueryTypeDist {
-		percentage := float64(count) / float64(m.TotalQueries) * 100
+	
+	queryTypes := map[string]int64{
+		"A":     m.QueryType.A,
+		"AAAA":  m.QueryType.AAAA,
+		"CNAME": m.QueryType.CNAME,
+		"MX":    m.QueryType.MX,
+		"TXT":   m.QueryType.TXT,
+		"NS":    m.QueryType.NS,
+		"SOA":   m.QueryType.SOA,
+		"PTR":   m.QueryType.PTR,
+		"Other": m.QueryType.Other,
+	}
+	
+	for qtype, count := range queryTypes {
+		if count == 0 {
+			continue
+		}
+		percentage := float64(count) / float64(m.QueryType.Total) * 100
 		sb.WriteString(fmt.Sprintf("  %s: %s (%.1f%%)\n", qtype, f.formatNumber(int64(count)), percentage))
 	}
 	sb.WriteString("\n")

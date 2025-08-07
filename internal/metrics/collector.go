@@ -4,25 +4,26 @@ import (
 	"sync"
 	"time"
 
+	"github.com/randax/dns-monitoring/internal/config"
 	"github.com/randax/dns-monitoring/internal/dns"
 )
 
 type Collector struct {
 	mu               sync.RWMutex
 	results          []dns.Result
-	config           *MetricsConfig
+	config           *config.MetricsConfig
 	windowStart      time.Time
 	lastCleanup      time.Time
 }
 
-func NewCollector(config *MetricsConfig) *Collector {
-	if config == nil {
-		config = DefaultMetricsConfig()
+func NewCollector(cfg *config.MetricsConfig) *Collector {
+	if cfg == nil {
+		cfg = config.DefaultMetricsConfig()
 	}
 	
 	return &Collector{
-		results:     make([]dns.Result, 0, config.MaxStoredResults),
-		config:      config,
+		results:     make([]dns.Result, 0, cfg.MaxStoredResults),
+		config:      cfg,
 		windowStart: time.Now(),
 		lastCleanup: time.Now(),
 	}
@@ -152,16 +153,16 @@ func (c *Collector) GetResultCount() int {
 	return len(c.results)
 }
 
-func (c *Collector) GetConfig() *MetricsConfig {
+func (c *Collector) GetConfig() *config.MetricsConfig {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	
 	return c.config
 }
 
-func (c *Collector) UpdateConfig(config *MetricsConfig) {
+func (c *Collector) UpdateConfig(cfg *config.MetricsConfig) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	
-	c.config = config
+	c.config = cfg
 }

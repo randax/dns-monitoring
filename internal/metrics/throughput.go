@@ -125,7 +125,7 @@ func calculateQPSByProtocol(results []internal_dns.Result, duration time.Duratio
 	protocolCounts := make(map[string]int)
 	
 	for _, r := range results {
-		protocol := r.Protocol
+		protocol := string(r.Protocol)
 		if protocol == "" {
 			protocol = "UDP"
 		}

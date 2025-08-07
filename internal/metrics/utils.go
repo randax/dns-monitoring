@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/randax/dns-monitoring/internal/config"
 	internal_dns "github.com/randax/dns-monitoring/internal/dns"
 )
 
@@ -121,25 +122,39 @@ func FormatQPS(qps float64) string {
 	return fmt.Sprintf("%.1fM qps", qps/1000000)
 }
 
-func ValidateMetricsConfig(config *MetricsConfig) error {
-	if config == nil {
+func ValidateMetricsConfig(cfg *config.MetricsConfig) error {
+	if cfg == nil {
 		return fmt.Errorf("metrics config is nil")
 	}
 	
-	if config.WindowDuration <= 0 {
+	if cfg.WindowDuration <= 0 {
 		return fmt.Errorf("window duration must be positive")
 	}
 	
-	if config.MaxStoredResults <= 0 {
+	if cfg.MaxStoredResults <= 0 {
 		return fmt.Errorf("max stored results must be positive")
 	}
 	
-	if config.CalculationInterval <= 0 {
+	if cfg.CalculationInterval <= 0 {
 		return fmt.Errorf("calculation interval must be positive")
 	}
 	
-	if config.PercentilePrecision < 0 || config.PercentilePrecision > 10 {
+	if cfg.PercentilePrecision < 0 || cfg.PercentilePrecision > 10 {
 		return fmt.Errorf("percentile precision must be between 0 and 10")
+	}
+	
+	if cfg.Export.Prometheus.Enabled {
+		if cfg.Export.Prometheus.Port <= 0 || cfg.Export.Prometheus.Port > 65535 {
+			return fmt.Errorf("prometheus port must be between 1 and 65535")
+		}
+		
+		if cfg.Export.Prometheus.Path == "" {
+			return fmt.Errorf("prometheus path cannot be empty")
+		}
+		
+		if cfg.Export.Prometheus.UpdateInterval <= 0 {
+			return fmt.Errorf("prometheus update interval must be positive")
+		}
 	}
 	
 	return nil

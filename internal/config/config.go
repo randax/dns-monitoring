@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/randax/dns-monitoring/internal/metrics"
 	"gopkg.in/yaml.v3"
 )
 
@@ -18,10 +17,50 @@ var (
 )
 
 type Config struct {
-	DNS     DNSConfig            `yaml:"dns"`
-	Monitor MonitorConfig        `yaml:"monitor"`
-	Output  OutputConfig         `yaml:"output"`
-	Metrics *metrics.MetricsConfig `yaml:"metrics"`
+	DNS     DNSConfig       `yaml:"dns"`
+	Monitor MonitorConfig   `yaml:"monitor"`
+	Output  OutputConfig    `yaml:"output"`
+	Metrics *MetricsConfig  `yaml:"metrics"`
+}
+
+type MetricsConfig struct {
+	Enabled              bool
+	WindowDuration       time.Duration
+	MaxStoredResults     int
+	CalculationInterval  time.Duration
+	EnabledMetrics       []string
+	PercentilePrecision  int
+	RateWindowSizes      []time.Duration
+	ThroughputSmoothing  bool
+	Export               ExportConfig
+}
+
+type ExportConfig struct {
+	Prometheus PrometheusConfig `yaml:"prometheus"`
+	Zabbix     ZabbixConfig     `yaml:"zabbix"`
+}
+
+type PrometheusConfig struct {
+	Enabled               bool          `yaml:"enabled"`
+	Port                  int           `yaml:"port"`
+	Path                  string        `yaml:"path"`
+	UpdateInterval        time.Duration `yaml:"update_interval"`
+	IncludeServerLabels   bool          `yaml:"include_server_labels"`
+	IncludeProtocolLabels bool          `yaml:"include_protocol_labels"`
+	MetricPrefix          string        `yaml:"metric_prefix"`
+}
+
+type ZabbixConfig struct {
+	Enabled       bool          `yaml:"enabled"`
+	Server        string        `yaml:"server"`
+	Port          int           `yaml:"port"`
+	HostName      string        `yaml:"hostname"`
+	SendInterval  time.Duration `yaml:"send_interval"`
+	BatchSize     int           `yaml:"batch_size"`
+	Timeout       time.Duration `yaml:"timeout"`
+	RetryAttempts int           `yaml:"retry_attempts"`
+	RetryDelay    time.Duration `yaml:"retry_delay"`
+	ItemPrefix    string        `yaml:"item_prefix"`
 }
 
 type DNSConfig struct {
@@ -148,7 +187,7 @@ func defaultConfig() *Config {
 				ShowDistributions: true,
 			},
 		},
-		Metrics: metrics.DefaultMetricsConfig(),
+		Metrics: DefaultMetricsConfig(),
 	}
 }
 
@@ -224,12 +263,8 @@ func (c *Config) validate() error {
 		c.Output.Format = "json"
 	}
 
-	if c.Metrics != nil {
-		if err := metrics.ValidateMetricsConfig(c.Metrics); err != nil {
-			return fmt.Errorf("invalid metrics configuration: %w", err)
-		}
-	} else {
-		c.Metrics = metrics.DefaultMetricsConfig()
+	if c.Metrics == nil {
+		c.Metrics = DefaultMetricsConfig()
 	}
 
 	if c.Output.CLI.RefreshInterval <= 0 {
@@ -240,7 +275,75 @@ func (c *Config) validate() error {
 		return fmt.Errorf("CLI refresh interval must be at least 1 second")
 	}
 
+	// Validate Zabbix configuration if enabled
+	if c.Metrics != nil && c.Metrics.Export.Zabbix.Enabled {
+		zabbix := &c.Metrics.Export.Zabbix
+		if zabbix.Server == "" {
+			return fmt.Errorf("Zabbix server address is required when Zabbix export is enabled")
+		}
+		if zabbix.Port <= 0 || zabbix.Port > 65535 {
+			return fmt.Errorf("Zabbix port must be between 1 and 65535, got %d", zabbix.Port)
+		}
+		if zabbix.HostName == "" {
+			return fmt.Errorf("Zabbix hostname is required when Zabbix export is enabled")
+		}
+		if zabbix.SendInterval <= 0 {
+			zabbix.SendInterval = 60 * time.Second
+		}
+		if zabbix.BatchSize <= 0 {
+			zabbix.BatchSize = 100
+		}
+		if zabbix.Timeout <= 0 {
+			zabbix.Timeout = 10 * time.Second
+		}
+		if zabbix.RetryAttempts < 0 {
+			zabbix.RetryAttempts = 3
+		}
+		if zabbix.RetryDelay <= 0 {
+			zabbix.RetryDelay = 5 * time.Second
+		}
+		if zabbix.ItemPrefix == "" {
+			zabbix.ItemPrefix = "dns"
+		}
+	}
+
 	return nil
+}
+
+func DefaultMetricsConfig() *MetricsConfig {
+	return &MetricsConfig{
+		Enabled:             true,
+		WindowDuration:      15 * time.Minute,
+		MaxStoredResults:    100000,
+		CalculationInterval: 10 * time.Second,
+		EnabledMetrics:      []string{"latency", "rates", "throughput", "distribution"},
+		PercentilePrecision: 3,
+		RateWindowSizes:     []time.Duration{1 * time.Minute, 5 * time.Minute, 15 * time.Minute},
+		ThroughputSmoothing: true,
+		Export: ExportConfig{
+			Prometheus: PrometheusConfig{
+				Enabled:               true,
+				Port:                  9090,
+				Path:                  "/metrics",
+				UpdateInterval:        30 * time.Second,
+				IncludeServerLabels:   true,
+				IncludeProtocolLabels: true,
+				MetricPrefix:          "dns",
+			},
+			Zabbix: ZabbixConfig{
+				Enabled:       false,
+				Server:        "localhost",
+				Port:          10051,
+				HostName:      "dns-monitor",
+				SendInterval:  60 * time.Second,
+				BatchSize:     100,
+				Timeout:       10 * time.Second,
+				RetryAttempts: 3,
+				RetryDelay:    5 * time.Second,
+				ItemPrefix:    "dns",
+			},
+		},
+	}
 }
 
 func (c *Config) Save(path string) error {

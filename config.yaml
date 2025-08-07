@@ -164,11 +164,158 @@ metrics:
   
   # Export settings for external systems
   export:
-    # Prometheus export
+    # Prometheus export configuration
+    # Prometheus is a powerful open-source monitoring and alerting toolkit
+    # When enabled, DNS metrics will be exposed in Prometheus format
     prometheus:
-      enabled: false
+      # Enable Prometheus metrics export
+      enabled: true
+      
+      # Port for the Prometheus HTTP server
+      # Prometheus will scrape metrics from http://hostname:port/metrics
       port: 9090
+      
+      # Path where metrics will be exposed
+      # Default: /metrics (standard Prometheus path)
       path: "/metrics"
+      
+      # How often to update metrics (should be less than Prometheus scrape interval)
+      update_interval: 30s
+      
+      # Include server name as a label in metrics
+      # This allows filtering and grouping by DNS server
+      include_server_labels: true
+      
+      # Include protocol (udp, tcp, dot, doh) as a label
+      # Useful for comparing performance across different protocols
+      include_protocol_labels: true
+      
+      # Prefix for all metric names (default: dns)
+      # Metrics will be named like: dns_queries_total, dns_latency_seconds, etc.
+      metric_prefix: "dns"
+      
+      # Available Prometheus metrics:
+      # - dns_queries_total: Total number of DNS queries (counter)
+      # - dns_queries_success_total: Total successful queries (counter)
+      # - dns_queries_error_total: Total failed queries (counter)
+      # - dns_query_duration_seconds: Query latency histogram with buckets
+      # - dns_query_duration_summary_seconds: Query latency summary with quantiles
+      # - dns_response_codes_total: Response codes distribution (counter)
+      # - dns_query_types_total: Query types distribution (counter)
+      # - dns_queries_per_second: Current QPS (gauge)
+      # - dns_success_rate_ratio: Success rate 0-1 (gauge)
+      # - dns_error_rate_ratio: Error rate 0-1 (gauge)
+      # - dns_latency_p50_seconds: P50 latency (gauge)
+      # - dns_latency_p95_seconds: P95 latency (gauge)
+      # - dns_latency_p99_seconds: P99 latency (gauge)
+      # - dns_latency_p999_seconds: P999 latency (gauge)
+      
+      # Example Prometheus configuration to scrape these metrics:
+      # scrape_configs:
+      #   - job_name: 'dns_monitoring'
+      #     static_configs:
+      #       - targets: ['localhost:9090']
+      #     scrape_interval: 60s
+    
+    # Zabbix export configuration
+    # Zabbix is an enterprise-class monitoring solution for networks and applications
+    # When enabled, DNS metrics will be sent to Zabbix server using Zabbix sender protocol
+    zabbix:
+      # Enable Zabbix metrics export
+      enabled: false
+      
+      # Zabbix server or proxy address
+      # This is where the DNS monitoring data will be sent
+      server: "localhost"
+      
+      # Zabbix server or proxy port (default: 10051)
+      port: 10051
+      
+      # Hostname as configured in Zabbix
+      # This must match the host name configured in Zabbix server
+      # The host should be created in Zabbix before starting the monitoring
+      hostname: "dns-monitor"
+      
+      # How often to send metrics to Zabbix
+      # Should align with your Zabbix item update intervals
+      send_interval: 60s
+      
+      # Batch size for sending items
+      # Larger batches are more efficient but may hit size limits
+      batch_size: 100
+      
+      # Connection timeout for Zabbix server
+      timeout: 10s
+      
+      # Number of retry attempts if sending fails
+      retry_attempts: 3
+      
+      # Delay between retry attempts
+      retry_delay: 5s
+      
+      # Prefix for all Zabbix item names (default: dns)
+      # Items will be named like: dns.latency.p50, dns.success_rate, etc.
+      item_prefix: "dns"
+      
+      # Zabbix items that will be created:
+      # Latency metrics (in milliseconds):
+      # - dns.latency.p50: 50th percentile (median) latency
+      # - dns.latency.p95: 95th percentile latency
+      # - dns.latency.p99: 99th percentile latency
+      # - dns.latency.p999: 99.9th percentile latency
+      # - dns.latency.avg: Average latency
+      # - dns.latency.min: Minimum latency
+      # - dns.latency.max: Maximum latency
+      #
+      # Rate metrics (percentages 0-100):
+      # - dns.success_rate: Percentage of successful queries
+      # - dns.error_rate: Percentage of failed queries
+      #
+      # Throughput metrics:
+      # - dns.qps.current: Current queries per second
+      # - dns.qps.avg: Average queries per second
+      # - dns.qps.peak: Peak queries per second
+      #
+      # Volume metrics:
+      # - dns.queries.total: Total number of queries
+      # - dns.queries.success: Total successful queries
+      # - dns.queries.error: Total failed queries
+      #
+      # Response code distribution (count):
+      # - dns.response_code.noerror: NOERROR responses
+      # - dns.response_code.nxdomain: NXDOMAIN responses
+      # - dns.response_code.servfail: SERVFAIL responses
+      # - dns.response_code.refused: REFUSED responses
+      # - dns.response_code.other: Other response codes
+      #
+      # Query type distribution (count):
+      # - dns.query_type.a: A record queries
+      # - dns.query_type.aaaa: AAAA record queries
+      # - dns.query_type.mx: MX record queries
+      # - dns.query_type.txt: TXT record queries
+      # - dns.query_type.ns: NS record queries
+      # - dns.query_type.cname: CNAME record queries
+      # - dns.query_type.other: Other query types
+      #
+      # Per-server metrics (if enabled):
+      # - dns.server.{server_name}.latency: Server-specific latency
+      # - dns.server.{server_name}.success_rate: Server-specific success rate
+      # - dns.server.{server_name}.qps: Server-specific QPS
+      #
+      # Zabbix server configuration:
+      # 1. Create a host in Zabbix with the same name as 'hostname' above
+      # 2. Create item prototypes or individual items for each metric
+      # 3. Set item type to "Zabbix trapper" for all DNS metrics
+      # 4. Configure triggers based on thresholds (e.g., latency > 100ms)
+      # 5. Create graphs and dashboards to visualize the metrics
+      #
+      # Example Zabbix item configuration:
+      # Name: DNS P95 Latency
+      # Key: dns.latency.p95
+      # Type: Zabbix trapper
+      # Type of information: Numeric (float)
+      # Units: ms
+      # Update interval: 60s (passive, updated by sender)
     
     # StatsD export
     statsd:

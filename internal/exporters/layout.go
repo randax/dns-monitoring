@@ -94,7 +94,7 @@ func (l *Layout) renderCompact(m *metrics.Metrics) string {
 func (l *Layout) renderDashboardHeader(sb *strings.Builder, m *metrics.Metrics) {
 	title := "DNS Monitoring Dashboard"
 	timestamp := time.Now().Format("15:04:05")
-	duration := formatDuration(m.Duration)
+	duration := formatDuration(m.Period.End.Sub(m.Period.Start))
 
 	headerLine := fmt.Sprintf("%s - %s (Duration: %s)",
 		l.terminal.Bold(title),
@@ -122,9 +122,9 @@ func (l *Layout) renderDashboardFooter(sb *strings.Builder, m *metrics.Metrics) 
 
 	footerText := fmt.Sprintf("Status: %s | Queries: %d | Errors: %d | Success: %.2f%%",
 		statusColor(status),
-		m.TotalQueries,
-		m.TotalErrors,
-		m.SuccessRate*100)
+		m.Rates.TotalQueries,
+		m.Rates.ErrorQueries,
+		m.Rates.SuccessRate)
 
 	sb.WriteString(centerText(footerText, l.width))
 	sb.WriteString("\n")
@@ -134,7 +134,7 @@ func (l *Layout) renderDashboardFooter(sb *strings.Builder, m *metrics.Metrics) 
 func (l *Layout) renderDetailedHeader(sb *strings.Builder, m *metrics.Metrics) {
 	sb.WriteString(l.terminal.Bold("\n=== DNS Monitoring Detailed Report ===\n"))
 	sb.WriteString(fmt.Sprintf("Generated: %s\n", time.Now().Format("2006-01-02 15:04:05")))
-	sb.WriteString(fmt.Sprintf("Duration: %s\n", formatDuration(m.Duration)))
+	sb.WriteString(fmt.Sprintf("Duration: %s\n", formatDuration(m.Period.End.Sub(m.Period.Start))))
 	sb.WriteString(strings.Repeat("-", 60) + "\n\n")
 }
 
@@ -145,11 +145,11 @@ func (l *Layout) createDashboardSections(m *metrics.Metrics, prev *metrics.Metri
 		l.createSuccessSection(m, prev),
 	}
 
-	if len(m.ResponseCodeDist) > 0 {
+	if m.ResponseCode.Total > 0 {
 		sections = append(sections, l.createResponseCodeSection(m))
 	}
 
-	if len(m.ServerMetrics) > 0 {
+	if m.Throughput.ByServer != nil && len(m.Throughput.ByServer) > 0 {
 		sections = append(sections, l.createServerSection(m))
 	}
 
@@ -169,10 +169,10 @@ func (l *Layout) createDetailedSections(m *metrics.Metrics) []*Section {
 
 func (l *Layout) createCompactSections(m *metrics.Metrics) []*Section {
 	return []*Section{
-		NewSection("P95", fmt.Sprintf("%s", formatDuration(m.LatencyP95)), l.terminal),
-		NewSection("QPS", fmt.Sprintf("%.1f", m.CurrentQPS), l.terminal),
-		NewSection("Success", fmt.Sprintf("%.1f%%", m.SuccessRate*100), l.terminal),
-		NewSection("Errors", fmt.Sprintf("%d", m.TotalErrors), l.terminal),
+		NewSection("P95", fmt.Sprintf("%s", formatDuration(time.Duration(m.Latency.P95 * float64(time.Millisecond)))), l.terminal),
+		NewSection("QPS", fmt.Sprintf("%.1f", m.Throughput.CurrentQPS), l.terminal),
+		NewSection("Success", fmt.Sprintf("%.1f%%", m.Rates.SuccessRate), l.terminal),
+		NewSection("Errors", fmt.Sprintf("%d", m.Rates.ErrorQueries), l.terminal),
 	}
 }
 
@@ -184,17 +184,17 @@ func (l *Layout) createLatencySection(m *metrics.Metrics, prev *metrics.Metrics)
 		value time.Duration
 		prev  time.Duration
 	}{
-		{"P50", m.LatencyP50, 0},
-		{"P95", m.LatencyP95, 0},
-		{"P99", m.LatencyP99, 0},
-		{"P999", m.LatencyP999, 0},
+		{"P50", time.Duration(m.Latency.P50 * float64(time.Millisecond)), 0},
+		{"P95", time.Duration(m.Latency.P95 * float64(time.Millisecond)), 0},
+		{"P99", time.Duration(m.Latency.P99 * float64(time.Millisecond)), 0},
+		{"P999", time.Duration(m.Latency.P999 * float64(time.Millisecond)), 0},
 	}
 
 	if prev != nil {
-		latencyData[0].prev = prev.LatencyP50
-		latencyData[1].prev = prev.LatencyP95
-		latencyData[2].prev = prev.LatencyP99
-		latencyData[3].prev = prev.LatencyP999
+		latencyData[0].prev = time.Duration(prev.Latency.P50 * float64(time.Millisecond))
+		latencyData[1].prev = time.Duration(prev.Latency.P95 * float64(time.Millisecond))
+		latencyData[2].prev = time.Duration(prev.Latency.P99 * float64(time.Millisecond))
+		latencyData[3].prev = time.Duration(prev.Latency.P999 * float64(time.Millisecond))
 	}
 
 	for _, ld := range latencyData {
@@ -215,12 +215,12 @@ func (l *Layout) createThroughputSection(m *metrics.Metrics, prev *metrics.Metri
 
 	currentTrend := ""
 	if l.showTrend && prev != nil {
-		currentTrend = l.getTrend(m.CurrentQPS, prev.CurrentQPS, false)
+		currentTrend = l.getTrend(m.Throughput.CurrentQPS, prev.Throughput.CurrentQPS, false)
 	}
 
-	s.AddLine(fmt.Sprintf("Current: %.1f q/s %s", m.CurrentQPS, currentTrend))
-	s.AddLine(fmt.Sprintf("Average: %.1f q/s", m.AvgQPS))
-	s.AddLine(fmt.Sprintf("Peak   : %.1f q/s", m.PeakQPS))
+	s.AddLine(fmt.Sprintf("Current: %.1f q/s %s", m.Throughput.CurrentQPS, currentTrend))
+	s.AddLine(fmt.Sprintf("Average: %.1f q/s", m.Throughput.AverageQPS))
+	s.AddLine(fmt.Sprintf("Peak   : %.1f q/s", m.Throughput.PeakQPS))
 
 	return s
 }
@@ -230,13 +230,13 @@ func (l *Layout) createSuccessSection(m *metrics.Metrics, prev *metrics.Metrics)
 
 	successTrend := ""
 	if l.showTrend && prev != nil {
-		successTrend = l.getTrend(m.SuccessRate, prev.SuccessRate, false)
+		successTrend = l.getTrend(m.Rates.SuccessRate, prev.Rates.SuccessRate, false)
 	}
 
-	successColor := l.getSuccessColor(m.SuccessRate)
-	s.AddLine(fmt.Sprintf("Success: %s %s", successColor(fmt.Sprintf("%.2f%%", m.SuccessRate*100)), successTrend))
-	s.AddLine(fmt.Sprintf("Errors : %s", l.terminal.Red(fmt.Sprintf("%.2f%%", m.ErrorRate*100))))
-	s.AddLine(fmt.Sprintf("Total  : %d queries", m.TotalQueries))
+	successColor := l.getSuccessColor(m.Rates.SuccessRate)
+	s.AddLine(fmt.Sprintf("Success: %s %s", successColor(fmt.Sprintf("%.2f%%", m.Rates.SuccessRate)), successTrend))
+	s.AddLine(fmt.Sprintf("Errors : %s", l.terminal.Red(fmt.Sprintf("%.2f%%", m.Rates.ErrorRate))))
+	s.AddLine(fmt.Sprintf("Total  : %d queries", m.Rates.TotalQueries))
 
 	return s
 }
@@ -244,11 +244,23 @@ func (l *Layout) createSuccessSection(m *metrics.Metrics, prev *metrics.Metrics)
 func (l *Layout) createResponseCodeSection(m *metrics.Metrics) *Section {
 	s := NewSection("Response Codes", "", l.terminal)
 
-	for code, count := range m.ResponseCodeDist {
-		percentage := float64(count) / float64(m.TotalQueries) * 100
-		codeStr := getResponseCodeString(code)
-		color := l.getResponseCodeColor(code)
-		s.AddLine(fmt.Sprintf("%-10s: %6d (%.1f%%)", color(codeStr), count, percentage))
+	responseCodes := map[string]int64{
+		"NoError":  m.ResponseCode.NoError,
+		"NXDomain": m.ResponseCode.NXDomain,
+		"ServFail": m.ResponseCode.ServFail,
+		"FormErr":  m.ResponseCode.FormErr,
+		"NotImpl":  m.ResponseCode.NotImpl,
+		"Refused":  m.ResponseCode.Refused,
+		"Other":    m.ResponseCode.Other,
+	}
+	
+	for code, count := range responseCodes {
+		if count == 0 {
+			continue
+		}
+		percentage := float64(count) / float64(m.ResponseCode.Total) * 100
+		color := l.getResponseCodeColorByName(code)
+		s.AddLine(fmt.Sprintf("%-10s: %6d (%.1f%%)", color(code), count, percentage))
 	}
 
 	return s
@@ -257,8 +269,23 @@ func (l *Layout) createResponseCodeSection(m *metrics.Metrics) *Section {
 func (l *Layout) createQueryTypeSection(m *metrics.Metrics) *Section {
 	s := NewSection("Query Types", "", l.terminal)
 
-	for qtype, count := range m.QueryTypeDist {
-		percentage := float64(count) / float64(m.TotalQueries) * 100
+	queryTypes := map[string]int64{
+		"A":     m.QueryType.A,
+		"AAAA":  m.QueryType.AAAA,
+		"CNAME": m.QueryType.CNAME,
+		"MX":    m.QueryType.MX,
+		"TXT":   m.QueryType.TXT,
+		"NS":    m.QueryType.NS,
+		"SOA":   m.QueryType.SOA,
+		"PTR":   m.QueryType.PTR,
+		"Other": m.QueryType.Other,
+	}
+	
+	for qtype, count := range queryTypes {
+		if count == 0 {
+			continue
+		}
+		percentage := float64(count) / float64(m.QueryType.Total) * 100
 		s.AddLine(fmt.Sprintf("%-10s: %6d (%.1f%%)", qtype, count, percentage))
 	}
 
@@ -268,22 +295,24 @@ func (l *Layout) createQueryTypeSection(m *metrics.Metrics) *Section {
 func (l *Layout) createServerSection(m *metrics.Metrics) *Section {
 	s := NewSection("Server Status", "", l.terminal)
 
-	for server, sm := range m.ServerMetrics {
-		status := "UP"
-		statusColor := l.terminal.Green
-		if sm.ErrorRate > 0.1 {
-			status = "DEGRADED"
-			statusColor = l.terminal.Yellow
-		}
-		if sm.ErrorRate > 0.5 {
-			status = "DOWN"
-			statusColor = l.terminal.Red
-		}
+	// For now, we'll use the ByServer throughput data for basic server status
+	if m.Throughput.ByServer != nil {
+		for server, qps := range m.Throughput.ByServer {
+			status := "UP"
+			statusColor := l.terminal.Green
+			if qps == 0 {
+				status = "DOWN"
+				statusColor = l.terminal.Red
+			} else if qps < 10 {
+				status = "DEGRADED"
+				statusColor = l.terminal.Yellow
+			}
 
-		s.AddLine(fmt.Sprintf("%-20s: %s (%.1f%% errors)",
-			TruncateString(server, 20),
-			statusColor(status),
-			sm.ErrorRate*100))
+			s.AddLine(fmt.Sprintf("%-20s: %s (%.1f q/s)",
+				TruncateString(server, 20),
+				statusColor(status),
+				qps))
+		}
 	}
 
 	return s
@@ -377,11 +406,25 @@ func (l *Layout) getResponseCodeColor(code int) func(string) string {
 	}
 }
 
+func (l *Layout) getResponseCodeColorByName(code string) func(string) string {
+	switch code {
+	case "NoError":
+		return l.terminal.Green
+	case "NXDomain":
+		return l.terminal.Yellow
+	case "ServFail":
+		return l.terminal.Red
+	default:
+		return l.terminal.Cyan
+	}
+}
+
 func (l *Layout) getSystemStatus(m *metrics.Metrics) string {
-	if m.SuccessRate < 0.9 || m.LatencyP95 > 500*time.Millisecond {
+	latencyP95 := time.Duration(m.Latency.P95 * float64(time.Millisecond))
+	if m.Rates.SuccessRate < 90 || latencyP95 > 500*time.Millisecond {
 		return "CRITICAL"
 	}
-	if m.SuccessRate < 0.95 || m.LatencyP95 > 200*time.Millisecond {
+	if m.Rates.SuccessRate < 95 || latencyP95 > 200*time.Millisecond {
 		return "WARNING"
 	}
 	return "HEALTHY"
