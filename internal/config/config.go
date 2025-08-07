@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/randax/dns-monitoring/internal/metrics"
 	"gopkg.in/yaml.v3"
 )
 
@@ -17,9 +18,10 @@ var (
 )
 
 type Config struct {
-	DNS     DNSConfig     `yaml:"dns"`
-	Monitor MonitorConfig `yaml:"monitor"`
-	Output  OutputConfig  `yaml:"output"`
+	DNS     DNSConfig            `yaml:"dns"`
+	Monitor MonitorConfig        `yaml:"monitor"`
+	Output  OutputConfig         `yaml:"output"`
+	Metrics *metrics.MetricsConfig `yaml:"metrics"`
 }
 
 type DNSConfig struct {
@@ -56,12 +58,21 @@ type OutputConfig struct {
 	Console    bool         `yaml:"console"`
 	Metrics    MetricConfig `yaml:"metrics"`
 	BufferSize int          `yaml:"buffer_size"`
+	CLI        CLIConfig    `yaml:"cli"`
 }
 
 type MetricConfig struct {
 	Enabled  bool   `yaml:"enabled"`
 	Endpoint string `yaml:"endpoint"`
 	Interval int    `yaml:"interval"`
+}
+
+type CLIConfig struct {
+	ShowColors        bool          `yaml:"show_colors"`
+	DetailedView      bool          `yaml:"detailed_view"`
+	RefreshInterval   time.Duration `yaml:"refresh_interval"`
+	CompactMode       bool          `yaml:"compact_mode"`
+	ShowDistributions bool          `yaml:"show_distributions"`
 }
 
 func Load(path string) (*Config, error) {
@@ -129,7 +140,15 @@ func defaultConfig() *Config {
 				Enabled:  false,
 				Interval: 60,
 			},
+			CLI: CLIConfig{
+				ShowColors:        true,
+				DetailedView:      false,
+				RefreshInterval:   10 * time.Second,
+				CompactMode:       false,
+				ShowDistributions: true,
+			},
 		},
+		Metrics: metrics.DefaultMetricsConfig(),
 	}
 }
 
@@ -203,6 +222,22 @@ func (c *Config) validate() error {
 
 	if c.Output.Format != "json" && c.Output.Format != "text" && c.Output.Format != "csv" {
 		c.Output.Format = "json"
+	}
+
+	if c.Metrics != nil {
+		if err := metrics.ValidateMetricsConfig(c.Metrics); err != nil {
+			return fmt.Errorf("invalid metrics configuration: %w", err)
+		}
+	} else {
+		c.Metrics = metrics.DefaultMetricsConfig()
+	}
+
+	if c.Output.CLI.RefreshInterval <= 0 {
+		c.Output.CLI.RefreshInterval = 10 * time.Second
+	}
+
+	if c.Output.CLI.RefreshInterval < time.Second {
+		return fmt.Errorf("CLI refresh interval must be at least 1 second")
 	}
 
 	return nil

@@ -6,17 +6,24 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
-	"github.com/randax/dns-monitoring/internal/config"
-	"github.com/randax/dns-monitoring/internal/dns"
+	"dns-monitoring/internal/config"
+	"dns-monitoring/internal/dns"
+	"dns-monitoring/internal/exporters"
+	"dns-monitoring/internal/metrics"
 	"github.com/spf13/cobra"
 )
 
 func newMonitorCmd() *cobra.Command {
 	var configPath string
 	var continuous bool
+	var detailedView bool
+	var noColor bool
+	var refreshInterval time.Duration
+	var rawOutput bool
 	
 	cmd := &cobra.Command{
 		Use:   "monitor",
@@ -31,29 +38,84 @@ func newMonitorCmd() *cobra.Command {
 			fmt.Printf("Starting DNS monitoring with %d servers and %d domains\n", 
 				len(cfg.DNS.Servers), len(cfg.DNS.Queries.Domains))
 			
+			if cmd.Flags().Changed("detailed") {
+				cfg.Output.CLI.DetailedView = detailedView
+			}
+			if cmd.Flags().Changed("no-color") {
+				cfg.Output.CLI.ShowColors = !noColor
+			}
+			if cmd.Flags().Changed("refresh-interval") {
+				cfg.Output.CLI.RefreshInterval = refreshInterval
+			}
+			
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			
 			sigChan := make(chan os.Signal, 1)
 			signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+			
+			var finalMetrics *metrics.Metrics
+			var metricsCollector *metrics.Collector
+			var cliFormatter *exporters.CLIFormatter
+			
+			if !rawOutput {
+				metricsCollector = metrics.NewCollector(cfg.Metrics)
+				cliFormatter = exporters.NewCLIFormatter(
+					cfg.Output.CLI.ShowColors,
+					cfg.Output.CLI.DetailedView,
+					cfg.Output.CLI.CompactMode,
+					cfg.Output.CLI.ShowDistributions,
+				)
+			}
+			
 			go func() {
 				<-sigChan
 				fmt.Println("\nShutting down gracefully...")
+				if metricsCollector != nil {
+					finalMetrics = metricsCollector.GetMetrics()
+				}
 				cancel()
 			}()
 			
 			engine := dns.NewEngine(cfg)
 			
+			var err error
 			if continuous {
-				return runContinuous(ctx, engine, cfg)
+				if rawOutput {
+					err = runContinuous(ctx, engine, cfg)
+				} else {
+					err = runContinuousWithMetrics(ctx, engine, cfg, metricsCollector, cliFormatter)
+				}
+			} else {
+				if rawOutput {
+					err = runOnce(ctx, engine, cfg)
+				} else {
+					err = runOnceWithMetrics(ctx, engine, cfg, metricsCollector, cliFormatter)
+				}
 			}
 			
-			return runOnce(ctx, engine, cfg)
+			if err != nil {
+				return err
+			}
+			
+			if finalMetrics == nil && metricsCollector != nil {
+				finalMetrics = metricsCollector.GetMetrics()
+			}
+			
+			if finalMetrics != nil && cliFormatter != nil {
+				fmt.Println(cliFormatter.FormatSummary(finalMetrics))
+			}
+			
+			return nil
 		},
 	}
 	
 	cmd.Flags().StringVarP(&configPath, "config", "c", "config.yaml", "Path to configuration file")
 	cmd.Flags().BoolVarP(&continuous, "continuous", "k", false, "Run continuously based on interval")
+	cmd.Flags().BoolVar(&detailedView, "detailed", false, "Show detailed metrics view")
+	cmd.Flags().BoolVar(&noColor, "no-color", false, "Disable ANSI color output")
+	cmd.Flags().DurationVar(&refreshInterval, "refresh-interval", 10*time.Second, "Metrics refresh interval for continuous monitoring")
+	cmd.Flags().BoolVar(&rawOutput, "raw-output", false, "Show individual results instead of aggregated metrics")
 	
 	return cmd
 }
@@ -89,6 +151,86 @@ func runContinuous(ctx context.Context, engine *dns.Engine, cfg *config.Config) 
 			
 			if err := displayResults(results, cfg); err != nil {
 				fmt.Printf("Error displaying results: %v\n", err)
+			}
+		}
+	}
+}
+
+func runOnceWithMetrics(ctx context.Context, engine *dns.Engine, cfg *config.Config, collector *metrics.Collector, formatter *exporters.CLIFormatter) error {
+	results, err := engine.Run(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to run DNS queries: %w", err)
+	}
+	
+	for result := range results {
+		collector.AddResult(result)
+	}
+	
+	m := collector.GetMetrics()
+	fmt.Println(formatter.FormatMetrics(m))
+	
+	return nil
+}
+
+func runContinuousWithMetrics(ctx context.Context, engine *dns.Engine, cfg *config.Config, collector *metrics.Collector, formatter *exporters.CLIFormatter) error {
+	queryTicker := time.NewTicker(cfg.Monitor.Interval)
+	defer queryTicker.Stop()
+	
+	displayTicker := time.NewTicker(cfg.Output.CLI.RefreshInterval)
+	defer displayTicker.Stop()
+	
+	resultsChan := make(chan dns.Result, 1000)
+	var wg sync.WaitGroup
+	
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for result := range resultsChan {
+			collector.AddResult(result)
+		}
+	}()
+	
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-queryTicker.C:
+				queryCtx, cancel := context.WithTimeout(ctx, cfg.Monitor.Interval)
+				results, err := engine.Run(queryCtx)
+				cancel()
+				
+				if err != nil {
+					fmt.Printf("Error running queries: %v\n", err)
+					continue
+				}
+				
+				for result := range results {
+					select {
+					case resultsChan <- result:
+					case <-ctx.Done():
+						return
+					}
+				}
+			}
+		}
+	}()
+	
+	prevMetrics := (*metrics.Metrics)(nil)
+	for {
+		select {
+		case <-ctx.Done():
+			close(resultsChan)
+			wg.Wait()
+			return nil
+		case <-displayTicker.C:
+			m := collector.GetMetrics()
+			if m.TotalQueries > 0 {
+				layout := exporters.NewLayout(exporters.LayoutDashboard, formatter.Terminal())
+				fmt.Print(layout.Render(m, prevMetrics))
+				prevMetrics = m
 			}
 		}
 	}

@@ -1,5 +1,7 @@
 # DNS Monitoring Configuration File
 # This file configures the DNS monitoring tool behavior
+# 
+# Example configuration demonstrating various DNS protocols and monitoring options
 
 # DNS Configuration
 dns:
@@ -112,3 +114,70 @@ output:
     
     # Metrics push interval in seconds
     interval: 60
+  
+  # CLI formatter configuration
+  cli:
+    # Enable color output (ANSI color codes)
+    show_colors: true
+    
+    # Show detailed metrics view
+    detailed_view: false
+    
+    # Refresh interval for real-time monitoring (minimum 1s)
+    refresh_interval: 10s
+    
+    # Compact mode for minimal output
+    compact_mode: false
+    
+    # Show query type and response code distributions
+    show_distributions: true
+
+# Metrics collection configuration
+metrics:
+  # Sliding window duration for metrics calculation
+  window_duration: 5m
+  
+  # Maximum number of data points to retain
+  max_data_points: 10000
+  
+  # Enable percentile calculations
+  calculate_percentiles: true
+  
+  # Percentiles to calculate
+  percentiles:
+    - 50   # P50 (median)
+    - 95   # P95
+    - 99   # P99
+    - 99.9 # P999
+  
+  # Enable per-server metrics
+  per_server_metrics: true
+  
+  # Enable query type distribution tracking
+  track_query_types: true
+  
+  # Enable response code distribution tracking
+  track_response_codes: true
+  
+  # QPS (Queries Per Second) calculation interval
+  qps_interval: 10s
+  
+  # Export settings for external systems
+  export:
+    # Prometheus export
+    prometheus:
+      enabled: false
+      port: 9090
+      path: "/metrics"
+    
+    # StatsD export
+    statsd:
+      enabled: false
+      address: "localhost:8125"
+      prefix: "dns_monitor"
+    
+    # JSON file export
+    json:
+      enabled: false
+      path: "metrics.json"
+      interval: 60s
