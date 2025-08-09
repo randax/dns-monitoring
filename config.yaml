@@ -37,6 +37,7 @@ dns:
       port: 443
       protocol: "doh"
       doh_endpoint: "/dns-query"  # Optional, defaults to /dns-query
+      doh_method: "POST"  # Optional, defaults to POST. Options: GET, POST
       insecure_skip_verify: false  # Set to true to skip TLS certificate verification
       enabled: true
     
@@ -45,6 +46,7 @@ dns:
       port: 443
       protocol: "doh"
       doh_endpoint: "/dns-query"
+      doh_method: "GET"  # Using GET method for DNS queries
       insecure_skip_verify: false  # Set to true to skip TLS certificate verification
       enabled: false
     
@@ -192,23 +194,92 @@ metrics:
       
       # Prefix for all metric names (default: dns)
       # Metrics will be named like: dns_queries_total, dns_latency_seconds, etc.
+      # Allowed characters: letters (a-z, A-Z), numbers (0-9), underscore (_), and colon (:)
+      # Colons are commonly used in recording rules and aggregations
       metric_prefix: "dns"
       
+      # Advanced metric features configuration
+      # By default, only core DNS metrics are enabled (latency, QPS, success rates, response codes)
+      # Enable individual features below for additional insights at the cost of increased memory usage
+      metric_features:
+        # Cache performance metrics (hit rate, efficiency, TTL distributions)
+        # Useful for understanding recursive resolver behavior
+        enable_cache_metrics: false
+        
+        # Network analysis metrics (packet loss, quality score, interface-level stats)
+        # Helpful for diagnosing network-related DNS issues
+        enable_network_metrics: false
+        
+        # Jitter tracking (P50, P95, P99 of latency variations)
+        # Important for detecting DNS instability
+        enable_jitter_metrics: false
+        
+        # TTL analysis (min, max, average TTL values)
+        # Useful for cache optimization and understanding record lifecycles
+        enable_ttl_metrics: false
+        
+        # Monitor health metrics (CPU, memory, goroutines, buffer usage)
+        # Helps track the monitoring tool's own resource usage
+        enable_monitoring_metrics: false
+      
+      # Enable tracking of individual latency samples for histogram/summary metrics
+      # When false (default), only percentile gauges are populated (lower overhead)
+      # When true, individual samples are tracked for histogram/summary metrics
+      enable_latency_sampling: false
+    
+    # Adaptive sampling configuration for memory usage control
+    adaptive_sampling:
+      # Enable adaptive sampling based on query volume and memory pressure
+      enabled: true
+      
+      # Minimum sampling rate (0.0-1.0)
+      # Even under high load, at least this fraction of queries will be sampled
+      min_sample_rate: 0.001
+      
+      # Maximum sampling rate (0.0-1.0) 
+      # Even under low load, at most this fraction of queries will be sampled
+      max_sample_rate: 1.0
+      
+      # Target sampling rate when conditions are normal
+      target_sample_rate: 0.1
+      
+      # Maximum memory to use for latency sample buffers (in MB)
+      memory_limit_mb: 100
+      
+      # How often to adjust the sampling rate based on conditions
+      adjust_interval: 30s
+      
+      # Time window for calculating query rates
+      window_duration: 5m
+      
+      # QPS threshold for high-volume traffic
+      high_volume_qps: 1000
+      
+      # QPS threshold for low-volume traffic
+      low_volume_qps: 10
+      
+      # Memory pressure threshold (0.0-1.0)
+      # When memory usage exceeds this fraction, sampling is reduced
+      memory_pressure_threshold: 0.8
+      
       # Available Prometheus metrics:
+      # Always available:
       # - dns_queries_total: Total number of DNS queries (counter)
       # - dns_queries_success_total: Total successful queries (counter)
       # - dns_queries_error_total: Total failed queries (counter)
-      # - dns_query_duration_seconds: Query latency histogram with buckets
-      # - dns_query_duration_summary_seconds: Query latency summary with quantiles
       # - dns_response_codes_total: Response codes distribution (counter)
       # - dns_query_types_total: Query types distribution (counter)
       # - dns_queries_per_second: Current QPS (gauge)
       # - dns_success_rate_ratio: Success rate 0-1 (gauge)
       # - dns_error_rate_ratio: Error rate 0-1 (gauge)
-      # - dns_latency_p50_seconds: P50 latency (gauge)
-      # - dns_latency_p95_seconds: P95 latency (gauge)
-      # - dns_latency_p99_seconds: P99 latency (gauge)
-      # - dns_latency_p999_seconds: P999 latency (gauge)
+      # - dns_latency_p50_seconds: 50th percentile latency (gauge)
+      # - dns_latency_p95_seconds: 95th percentile latency (gauge)
+      # - dns_latency_p99_seconds: 99th percentile latency (gauge)
+      # - dns_latency_p999_seconds: 99.9th percentile latency (gauge)
+      #
+      # Only populated when enable_latency_sampling is true:
+      # - dns_query_duration_seconds: Query latency histogram with buckets
+      # - dns_query_duration_summary_seconds: Query latency summary with quantiles
       
       # Example Prometheus configuration to scrape these metrics:
       # scrape_configs:
@@ -328,3 +399,192 @@ metrics:
       enabled: false
       path: "metrics.json"
       interval: 60s
+
+# Passive Monitoring Configuration
+# Captures and analyzes DNS traffic from network interfaces without sending queries
+passive:
+  # Enable passive DNS monitoring
+  # Note: Requires root/admin privileges or CAP_NET_RAW capability
+  enabled: false
+  
+  # Network interfaces to monitor
+  # Empty list means auto-detect all available non-loopback interfaces
+  # Examples: ["eth0", "en0", "wlan0"]
+  interfaces: []
+  
+  # Berkeley Packet Filter (BPF) expression for traffic filtering
+  # Default captures all DNS traffic on port 53
+  # Examples:
+  #   "port 53" - All DNS traffic (UDP and TCP)
+  #   "udp port 53" - Only UDP DNS traffic
+  #   "tcp port 53" - Only TCP DNS traffic
+  #   "port 53 and host 8.8.8.8" - DNS traffic to/from specific server
+  #   "port 53 and not host 192.168.1.1" - Exclude local DNS server
+  bpf: "port 53"
+  
+  # Maximum bytes to capture per packet
+  # 262144 is sufficient for most DNS packets including large responses
+  snaplen: 262144
+  
+  # Number of concurrent packet processing workers
+  # Increase for high-traffic environments
+  workers: 4
+  
+  # Timeout for matching DNS queries with responses
+  # Queries without responses after this timeout are considered failed
+  match_timeout: 5s
+  
+  # Internal packet buffer size
+  # Increase if dropping packets in high-traffic scenarios
+  buffer_size: 10000
+  
+  # TCP Stream Reassembly Configuration
+  # Optional: Enable TCP stream reassembly for fragmented DNS over TCP
+  tcp_reassembly:
+    # Enable TCP stream reassembly (disabled by default for lower resource usage)
+    enabled: false
+    
+    # Maximum number of concurrent TCP streams to track
+    # Each stream consumes memory, so adjust based on available resources
+    max_streams: 1000
+    
+    # Maximum buffer size per stream in bytes (64KB default)
+    # Larger buffers handle bigger DNS responses but consume more memory
+    max_buffer_size: 65536
+    
+    # Maximum total memory for all TCP reassembly buffers (100MB default)
+    # Prevents excessive memory usage in high-traffic scenarios
+    max_total_memory: 104857600
+    
+    # How often to flush old/inactive streams
+    flush_interval: 5s
+    
+    # Timeout for inactive TCP streams
+    stream_timeout: 30s
+    
+    # How often to clean up old buffers and enforce resource limits
+    cleanup_interval: 10s
+
+# Cache Performance Analysis Configuration
+# Analyzes cache behavior of recursive DNS resolvers to identify cache hits and efficiency
+cache:
+  # Enable cache performance analysis
+  enabled: false
+  
+  # Interval between cache analysis cycles
+  # Cache analysis examines response times and TTL values to detect cached responses
+  analysis_interval: 30s
+  
+  # Response time threshold for detecting cache hits
+  # Responses faster than this threshold are likely served from cache
+  # Typical values: 5-20ms for cache hits vs 50-200ms for authoritative queries
+  cache_hit_threshold: 10ms
+  
+  # List of recursive DNS servers to analyze for cache performance
+  # These should be server names from the DNS servers list above
+  # Leave empty to analyze all configured servers
+  recursive_servers: []
+    # - "Google Primary"
+    # - "Cloudflare Primary"
+  
+  # Track TTL values to detect cache behavior
+  # When enabled, monitors TTL decrements to identify cached responses
+  ttl_tracking: true
+  
+  # Calculate cache efficiency metrics
+  # Includes hit rate, miss rate, and cache effectiveness score
+  cache_efficiency_metrics: true
+  
+  # Cache detection methods to use
+  # Available methods:
+  #   - "timing": Detect cache hits based on response time patterns
+  #   - "ttl": Track TTL decrements to identify cached responses  
+  #   - "pattern": Analyze response patterns for cache detection
+  detection_methods:
+    - "timing"
+    - "ttl"
+    - "pattern"
+  
+  # Cache Analysis Concepts:
+  # - Cache Hit: DNS response served from resolver's cache (fast, low latency)
+  # - Cache Miss: Query forwarded to authoritative server (slower, higher latency)
+  # - Cache Efficiency: Ratio of cache hits to total queries (higher is better)
+  # - TTL Tracking: Monitors time-to-live values decreasing over time
+  # - Cache Age: Estimated time since response was cached
+  #
+  # When to Enable:
+  # - Testing recursive resolver performance
+  # - Optimizing DNS caching strategies
+  # - Troubleshooting intermittent slowness
+  # - Validating cache configuration changes
+  #
+  # Performance Impact:
+  # - Minimal overhead when using timing-based detection
+  # - TTL tracking requires storing historical data
+  # - Pattern analysis may increase CPU usage slightly
+
+# Network-Level Metrics Configuration
+# Monitors packet loss, jitter, and network quality for DNS communications
+network:
+  # Enable network-level metrics collection
+  enabled: false
+  
+  # Enable packet loss detection
+  # Tracks sent queries vs received responses to calculate loss percentage
+  packet_loss_detection: false
+  
+  # Enable jitter calculation
+  # Measures variation in response times to detect network instability
+  jitter_calculation: false
+  
+  # Enable ping integration for network path analysis
+  # Uses ICMP to measure network latency separately from DNS processing
+  ping_integration: false
+  
+  # Timeout for network operations
+  network_timeouts: 10s
+  
+  # Packet loss threshold for alerting (0.0 to 1.0)
+  # 0.05 = 5% packet loss triggers warnings
+  packet_loss_threshold: 0.05
+  
+  # Jitter threshold for network quality assessment
+  # High jitter indicates unstable network conditions
+  jitter_threshold: 50ms
+  
+  # Sample size for statistical calculations
+  # Larger samples provide more accurate metrics but use more memory
+  sample_size: 100
+  
+  # Network interfaces to monitor (for packet-level analysis)
+  # Leave empty to monitor all interfaces
+  network_interfaces: []
+    # - "eth0"
+    # - "wlan0"
+  
+  # Network Metrics Concepts:
+  # - Packet Loss: Percentage of DNS queries without responses
+  # - Jitter: Variation in latency over time (standard deviation)
+  # - Network Latency: Pure network transit time (excluding DNS processing)
+  # - Hop Count: Number of network hops to DNS server
+  # - Network Quality Score: Composite metric (0-100) based on loss, jitter, latency
+  #
+  # Calculation Methods:
+  # - Packet Loss: (Sent Queries - Received Responses) / Sent Queries
+  # - Jitter: Standard deviation of response times over sample window
+  # - Network Quality: 100 - (PacketLoss% * 50 + JitterScore * 30 + LatencyScore * 20)
+  #
+  # When to Enable:
+  # - Diagnosing intermittent DNS failures
+  # - Monitoring WAN link quality
+  # - Troubleshooting network performance issues
+  # - Validating QoS configurations
+  #
+  # Performance Impact:
+  # - Packet loss detection: Low overhead
+  # - Jitter calculation: Moderate CPU for statistics
+  # - Ping integration: Additional ICMP traffic
+  #
+  # Privilege Requirements:
+  # - Ping integration may require root/admin privileges
+  # - Some metrics require CAP_NET_RAW capability on Linux

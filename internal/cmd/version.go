@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"runtime"
 
 	"github.com/spf13/cobra"
 )
@@ -43,12 +44,12 @@ func getGoVersion() string {
 	if goVersion := os.Getenv("GO_VERSION"); goVersion != "" {
 		return goVersion
 	}
-	return "unknown"
+	return runtime.Version()
 }
 
 func getOSArch() string {
 	if osArch := os.Getenv("OS_ARCH"); osArch != "" {
 		return osArch
 	}
-	return "unknown"
+	return runtime.GOOS + "/" + runtime.GOARCH
 }

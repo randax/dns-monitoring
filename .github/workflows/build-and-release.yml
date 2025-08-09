@@ -1,0 +1,362 @@
+name: Build and Release
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: 'Release version (e.g., v1.0.0)'
+        required: false
+        type: string
+
+env:
+  GO_VERSION: '1.21'
+  BINARY_NAME: 'dns-monitor'
+
+jobs:
+  build:
+    name: Build for ${{ matrix.os }}-${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          # Linux builds
+          - os: linux
+            arch: amd64
+            suffix: ''
+          - os: linux
+            arch: arm64
+            suffix: ''
+          - os: linux
+            arch: arm
+            arm: '7'
+            suffix: ''
+          
+          # Windows builds
+          - os: windows
+            arch: amd64
+            suffix: '.exe'
+          - os: windows
+            arch: arm64
+            suffix: '.exe'
+          
+          # macOS builds
+          - os: darwin
+            arch: amd64
+            suffix: ''
+          - os: darwin
+            arch: arm64
+            suffix: ''
+          
+          # FreeBSD builds
+          - os: freebsd
+            arch: amd64
+            suffix: ''
+          - os: freebsd
+            arch: arm64
+            suffix: ''
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install dependencies
+        run: |
+          go mod download
+          go mod verify
+
+      - name: Set build variables
+        id: vars
+        run: |
+          # Get version from tag or commit
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            VERSION="${{ github.ref_name }}"
+          elif [[ -n "${{ github.event.inputs.release_version }}" ]]; then
+            VERSION="${{ github.event.inputs.release_version }}"
+          else
+            VERSION="dev-$(git rev-parse --short HEAD)"
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "build_time=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_OUTPUT
+          echo "git_commit=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+          
+          # Set binary name with architecture
+          if [[ "${{ matrix.os }}" == "windows" ]]; then
+            BINARY_NAME="${{ env.BINARY_NAME }}-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.suffix }}"
+          else
+            BINARY_NAME="${{ env.BINARY_NAME }}-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.suffix }}"
+          fi
+          echo "binary_name=${BINARY_NAME}" >> $GITHUB_OUTPUT
+          
+          # Set archive name
+          ARCHIVE_NAME="${{ env.BINARY_NAME }}-${VERSION}-${{ matrix.os }}-${{ matrix.arch }}"
+          if [[ "${{ matrix.os }}" == "windows" ]]; then
+            ARCHIVE_NAME="${ARCHIVE_NAME}.zip"
+          else
+            ARCHIVE_NAME="${ARCHIVE_NAME}.tar.gz"
+          fi
+          echo "archive_name=${ARCHIVE_NAME}" >> $GITHUB_OUTPUT
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+          GOARM: ${{ matrix.arm }}
+          CGO_ENABLED: 0
+        run: |
+          # Build with version information
+          go build -v \
+            -ldflags="-s -w \
+              -X 'main.Version=${{ steps.vars.outputs.version }}' \
+              -X 'main.BuildTime=${{ steps.vars.outputs.build_time }}' \
+              -X 'main.GitCommit=${{ steps.vars.outputs.git_commit }}' \
+              -X 'main.GoVersion=$(go version | cut -d' ' -f3)' \
+              -X 'main.Platform=${{ matrix.os }}/${{ matrix.arch }}'" \
+            -o "${{ steps.vars.outputs.binary_name }}" \
+            ./cmd/dns-monitoring
+
+      - name: Run basic tests (Linux AMD64 only)
+        if: matrix.os == 'linux' && matrix.arch == 'amd64'
+        run: |
+          go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
+          
+      - name: Upload coverage (Linux AMD64 only)
+        if: matrix.os == 'linux' && matrix.arch == 'amd64' && github.event_name == 'push'
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.txt
+          flags: unittests
+          name: codecov-${{ matrix.os }}-${{ matrix.arch }}
+        continue-on-error: true
+
+      - name: Verify binary
+        if: matrix.os == 'linux' && matrix.arch == 'amd64'
+        run: |
+          ./${{ steps.vars.outputs.binary_name }} version || true
+          file ./${{ steps.vars.outputs.binary_name }}
+
+      - name: Create archive
+        run: |
+          # Create necessary directories
+          mkdir -p dist
+          
+          # Copy binary and supporting files
+          cp ${{ steps.vars.outputs.binary_name }} dist/
+          cp README.md dist/ || true
+          cp LICENSE dist/ || true
+          cp config.yaml dist/ || true
+          cp config-minimal.yaml dist/ || true
+          
+          # Copy examples directory if it exists
+          if [ -d "examples" ]; then
+            cp -r examples dist/
+          fi
+          
+          # Copy docs directory if it exists
+          if [ -d "docs" ]; then
+            cp -r docs dist/
+          fi
+          
+          # Create archive
+          cd dist
+          if [[ "${{ matrix.os }}" == "windows" ]]; then
+            # For Windows, create a zip file
+            zip -r ../${{ steps.vars.outputs.archive_name }} .
+          else
+            # For Unix-like systems, create a tar.gz
+            tar -czf ../${{ steps.vars.outputs.archive_name }} .
+          fi
+          cd ..
+
+      - name: Calculate checksums
+        run: |
+          sha256sum ${{ steps.vars.outputs.archive_name }} > ${{ steps.vars.outputs.archive_name }}.sha256
+          md5sum ${{ steps.vars.outputs.archive_name }} > ${{ steps.vars.outputs.archive_name }}.md5
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BINARY_NAME }}-${{ matrix.os }}-${{ matrix.arch }}
+          path: |
+            ${{ steps.vars.outputs.archive_name }}
+            ${{ steps.vars.outputs.archive_name }}.sha256
+            ${{ steps.vars.outputs.archive_name }}.md5
+          retention-days: 30
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.release_version != ''
+    permissions:
+      contents: write
+      
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Prepare release files
+        run: |
+          mkdir -p release
+          find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" -o -name "*.sha256" -o -name "*.md5" \) -exec cp {} release/ \;
+          ls -la release/
+
+      - name: Generate release notes
+        id: release_notes
+        run: |
+          # Get version
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            VERSION="${{ github.ref_name }}"
+          else
+            VERSION="${{ github.event.inputs.release_version }}"
+          fi
+          
+          # Generate changelog (basic version, customize as needed)
+          cat > release_notes.md << EOF
+          # DNS Monitor ${VERSION}
+          
+          ## Release Highlights
+          
+          This release includes binaries for multiple platforms:
+          - Linux (amd64, arm64, armv7)
+          - Windows (amd64, arm64)
+          - macOS (amd64, arm64)
+          - FreeBSD (amd64, arm64)
+          
+          ## Installation
+          
+          ### Linux/macOS/FreeBSD
+          \`\`\`bash
+          # Download the appropriate binary for your platform
+          wget https://github.com/\${{ github.repository }}/releases/download/${VERSION}/dns-monitor-${VERSION}-linux-amd64.tar.gz
+          
+          # Extract
+          tar -xzf dns-monitor-${VERSION}-linux-amd64.tar.gz
+          
+          # Make executable
+          chmod +x dns-monitor
+          
+          # Run
+          ./dns-monitor version
+          \`\`\`
+          
+          ### Windows
+          \`\`\`powershell
+          # Download the Windows binary
+          Invoke-WebRequest -Uri "https://github.com/\${{ github.repository }}/releases/download/${VERSION}/dns-monitor-${VERSION}-windows-amd64.zip" -OutFile "dns-monitor.zip"
+          
+          # Extract
+          Expand-Archive -Path "dns-monitor.zip" -DestinationPath "."
+          
+          # Run
+          .\dns-monitor.exe version
+          \`\`\`
+          
+          ## Checksums
+          
+          SHA256 and MD5 checksums are provided for each binary.
+          
+          ## What's Changed
+          
+          * See the [full changelog](https://github.com/\${{ github.repository }}/compare/\${{ github.event.before }}...${VERSION})
+          
+          ## Docker Image
+          
+          \`\`\`bash
+          docker pull ghcr.io/\${{ github.repository_owner }}/dns-monitor:${VERSION}
+          \`\`\`
+          
+          EOF
+          
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.release_notes.outputs.version }}
+          name: DNS Monitor ${{ steps.release_notes.outputs.version }}
+          body_path: release_notes.md
+          draft: false
+          prerelease: ${{ contains(steps.release_notes.outputs.version, 'rc') || contains(steps.release_notes.outputs.version, 'beta') || contains(steps.release_notes.outputs.version, 'alpha') }}
+          files: release/*
+          fail_on_unmatched_files: false
+          generate_release_notes: true
+
+  docker:
+    name: Build and Push Docker Image
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event.inputs.release_version != ''
+    permissions:
+      contents: read
+      packages: write
+      
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/dns-monitor
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix={{branch}}-,format=short
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64,linux/arm/v7
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            BUILD_TIME=${{ github.event.head_commit.timestamp }}
+            GIT_COMMIT=${{ github.sha }}

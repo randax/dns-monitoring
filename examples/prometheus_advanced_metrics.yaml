@@ -1,0 +1,81 @@
+# Example configuration demonstrating advanced Prometheus metrics
+# This shows how to enable specific metric groups based on monitoring needs
+
+dns:
+  servers:
+    - name: "Google DNS"
+      address: "8.8.8.8"
+      port: 53
+      protocol: "udp"
+      enabled: true
+    
+    - name: "Cloudflare DNS"
+      address: "1.1.1.1"
+      port: 53
+      protocol: "udp"
+      enabled: true
+
+  queries:
+    types: ["A", "AAAA"]
+    domains: ["example.com", "google.com"]
+    timeout: 5s
+    retries: 3
+
+monitor:
+  interval: 30s
+  max_concurrent: 10
+
+metrics:
+  window_duration: 5m
+  calculate_percentiles: true
+  percentiles: [50, 95, 99, 99.9]
+  
+  export:
+    prometheus:
+      enabled: true
+      port: 9090
+      path: "/metrics"
+      update_interval: 30s
+      include_server_labels: true
+      include_protocol_labels: true
+      metric_prefix: "dns"
+      
+      # Example 1: Minimal configuration (default)
+      # Only core metrics: latency percentiles, QPS, success/error rates, response codes
+      # Memory usage: ~100 metrics total
+      # Use case: Basic DNS monitoring with low overhead
+      
+      # Example 2: Cache analysis configuration
+      # Uncomment to enable cache metrics for recursive resolver monitoring
+      metric_features:
+        enable_cache_metrics: true  # Adds ~10 cache-related metrics
+        enable_network_metrics: false
+        enable_jitter_metrics: false
+        enable_ttl_metrics: true     # Often used with cache metrics
+        enable_monitoring_metrics: false
+      
+      # Example 3: Network troubleshooting configuration
+      # Uncomment for detailed network analysis
+      # metric_features:
+      #   enable_cache_metrics: false
+      #   enable_network_metrics: true   # Adds ~15 network metrics
+      #   enable_jitter_metrics: true     # Adds ~4 jitter metrics
+      #   enable_ttl_metrics: false
+      #   enable_monitoring_metrics: false
+      
+      # Example 4: Full monitoring configuration
+      # Uncomment for comprehensive metrics (higher memory usage)
+      # metric_features:
+      #   enable_cache_metrics: true      # ~10 metrics
+      #   enable_network_metrics: true    # ~15 metrics
+      #   enable_jitter_metrics: true     # ~4 metrics
+      #   enable_ttl_metrics: true        # ~3 metrics
+      #   enable_monitoring_metrics: true # ~9 metrics
+      
+      # Latency sampling for histogram/summary metrics
+      # Only enable if you need histogram_quantile() in PromQL
+      enable_latency_sampling: false
+      
+      # Counter state cleanup (for long-running deployments)
+      counter_state_cleanup_interval: 1h
+      counter_state_max_age: 2h

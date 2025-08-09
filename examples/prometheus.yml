@@ -1,0 +1,103 @@
+# Example Prometheus configuration for scraping DNS Monitor metrics
+# Place this in your Prometheus configuration directory
+
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+  external_labels:
+    monitor: 'dns-monitoring'
+    environment: 'production'
+
+# Alertmanager configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          - localhost:9093
+
+# Load rules once and periodically evaluate them
+rule_files:
+  - "dns_alert_rules.yml"
+
+# Scrape configurations
+scrape_configs:
+  # DNS Monitor metrics
+  - job_name: 'dns-monitor'
+    static_configs:
+      - targets: ['localhost:9090']
+        labels:
+          service: 'dns-monitor'
+          instance: 'primary'
+    
+    # Match the DNS monitor's update interval
+    scrape_interval: 30s
+    scrape_timeout: 10s
+    
+    # Optional: Basic auth if you've secured the endpoint
+    # basic_auth:
+    #   username: 'prometheus'
+    #   password: 'secret'
+    
+    # Metric relabeling for cleaner metric names
+    metric_relabel_configs:
+      # Drop metrics you don't need
+      # - source_labels: [__name__]
+      #   regex: 'dns_debug_.*'
+      #   action: drop
+      
+      # Add environment label to all metrics
+      - target_label: environment
+        replacement: 'production'
+  
+  # Optional: Multiple DNS monitor instances
+  - job_name: 'dns-monitor-secondary'
+    static_configs:
+      - targets: ['dns-monitor-2.example.com:9090']
+        labels:
+          service: 'dns-monitor'
+          instance: 'secondary'
+    scrape_interval: 30s
+    scrape_timeout: 10s
+
+  # Optional: DNS monitor in different locations
+  - job_name: 'dns-monitor-multi-region'
+    static_configs:
+      - targets: ['us-east.example.com:9090']
+        labels:
+          service: 'dns-monitor'
+          region: 'us-east'
+      
+      - targets: ['us-west.example.com:9090']
+        labels:
+          service: 'dns-monitor'
+          region: 'us-west'
+      
+      - targets: ['eu-west.example.com:9090']
+        labels:
+          service: 'dns-monitor'
+          region: 'eu-west'
+      
+      - targets: ['ap-south.example.com:9090']
+        labels:
+          service: 'dns-monitor'
+          region: 'ap-south'
+    
+    scrape_interval: 30s
+    scrape_timeout: 10s
+
+# Optional: Remote write configuration for long-term storage
+# remote_write:
+#   - url: "http://cortex.example.com/api/v1/push"
+#     queue_config:
+#       capacity: 10000
+#       max_shards: 5
+#       max_samples_per_send: 1000
+#       batch_send_deadline: 5s
+#       max_retries: 3
+#       min_backoff: 30ms
+#       max_backoff: 100ms
+
+# Optional: Remote read configuration
+# remote_read:
+#   - url: "http://cortex.example.com/api/v1/read"
+#     read_recent: true

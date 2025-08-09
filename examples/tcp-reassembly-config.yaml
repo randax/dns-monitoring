@@ -1,0 +1,53 @@
+# Example configuration with TCP reassembly enabled
+# This configuration demonstrates how to enable TCP stream reassembly
+# for better handling of DNS over TCP traffic
+
+dns:
+  servers:
+    - name: "Google DNS TCP"
+      address: "8.8.8.8"
+      port: 53
+      protocol: "tcp"
+      enabled: true
+
+passive:
+  # Enable passive monitoring
+  enabled: true
+  
+  # Monitor all interfaces
+  interfaces: []
+  
+  # Capture both UDP and TCP DNS traffic
+  bpf: "port 53"
+  
+  # TCP Stream Reassembly Configuration
+  tcp_reassembly:
+    # Enable TCP reassembly for fragmented DNS packets
+    enabled: true
+    
+    # Resource limits (conservative settings for testing)
+    max_streams: 500          # Track up to 500 concurrent TCP streams
+    max_buffer_size: 32768    # 32KB per stream
+    max_total_memory: 52428800 # 50MB total memory limit
+    
+    # Timing configuration
+    flush_interval: 3s        # Flush inactive streams every 3 seconds
+    stream_timeout: 15s       # Timeout inactive streams after 15 seconds
+    cleanup_interval: 5s      # Clean up resources every 5 seconds
+
+monitor:
+  interval: 30s
+  max_concurrent: 10
+
+output:
+  format: "json"
+  console: true
+  cli:
+    show_colors: true
+    detailed_view: true
+    refresh_interval: 5s
+
+metrics:
+  enabled: true
+  window_duration: 5m
+  calculation_interval: 10s

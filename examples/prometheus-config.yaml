@@ -1,0 +1,180 @@
+# Example DNS Monitor configuration with Prometheus exporter enabled
+# This configuration demonstrates various Prometheus export options
+
+# DNS Configuration
+dns:
+  servers:
+    - name: "Google Primary"
+      address: "8.8.8.8"
+      port: 53
+      enabled: true
+      protocol: "udp"
+    
+    - name: "Google Secondary"
+      address: "8.8.4.4"
+      port: 53
+      enabled: true
+      protocol: "udp"
+    
+    - name: "Cloudflare Primary"
+      address: "1.1.1.1"
+      port: 53
+      enabled: true
+      protocol: "udp"
+    
+    - name: "Cloudflare Secondary"
+      address: "1.0.0.1"
+      port: 53
+      enabled: true
+      protocol: "udp"
+    
+    - name: "Cloudflare DoH"
+      address: "cloudflare-dns.com"
+      port: 443
+      enabled: true
+      protocol: "doh"
+      doh_endpoint: "/dns-query"
+      doh_method: "POST"
+    
+    - name: "Google DoH"
+      address: "dns.google"
+      port: 443
+      enabled: true
+      protocol: "doh"
+      doh_endpoint: "/dns-query"
+      doh_method: "POST"
+
+  queries:
+    types:
+      - "A"
+      - "AAAA"
+      - "MX"
+      - "TXT"
+      - "NS"
+    domains:
+      - "google.com"
+      - "cloudflare.com"
+      - "github.com"
+      - "stackoverflow.com"
+      - "wikipedia.org"
+      - "reddit.com"
+      - "amazon.com"
+      - "youtube.com"
+    timeout: 5s
+    retries: 2
+
+# Monitoring Configuration
+monitor:
+  interval: 30s
+  max_concurrent: 20
+  alert_threshold: 5
+
+# Output Configuration
+output:
+  format: "json"
+  console: true
+  buffer_size: 5000
+  cli:
+    show_colors: true
+    detailed_view: false
+    refresh_interval: 10s
+    compact_mode: false
+    show_distributions: true
+
+# Metrics Configuration with Prometheus Export
+metrics:
+  enabled: true
+  window_duration: 15m
+  max_stored_results: 100000
+  calculation_interval: 10s
+  enabled_metrics:
+    - "latency"
+    - "rates"
+    - "throughput"
+    - "distribution"
+  percentile_precision: 3
+  rate_window_sizes:
+    - 1m
+    - 5m
+    - 15m
+  throughput_smoothing: true
+  
+  # Prometheus Exporter Configuration
+  export:
+    prometheus:
+      # Enable Prometheus metrics export
+      enabled: true
+      
+      # Port for HTTP metrics endpoint
+      port: 9090
+      
+      # Path for metrics endpoint
+      path: "/metrics"
+      
+      # How often to update metrics
+      update_interval: 30s
+      
+      # Include server name as label in metrics
+      include_server_labels: true
+      
+      # Include protocol type as label in metrics
+      include_protocol_labels: true
+      
+      # Prefix for all metric names
+      # Allowed characters: letters (a-z, A-Z), numbers (0-9), underscore (_), and colon (:)
+      metric_prefix: "dns"
+      
+      # Enable histogram/summary metrics (higher overhead)
+      # Set to true if you need histogram_quantile() queries in Prometheus
+      enable_latency_sampling: false
+      
+      # Counter state cleanup configuration
+      # Periodically removes stale counter state entries to prevent unbounded memory growth
+      # This is useful when monitoring dynamic sets of query types or network interfaces
+      
+      # How often to run the cleanup process (default: 1h)
+      # Set to 0 to disable cleanup
+      counter_state_cleanup_interval: 1h
+      
+      # Maximum age for counter state entries before removal (default: 1h)
+      # Entries not updated within this period will be removed
+      counter_state_max_age: 1h
+    
+    # Zabbix configuration (disabled in this example)
+    zabbix:
+      enabled: false
+
+# Optional: Passive monitoring configuration
+passive:
+  enabled: false
+  interfaces: []
+  bpf: "port 53"
+  snaplen: 262144
+  workers: 4
+  match_timeout: 5s
+  buffer_size: 10000
+
+# Optional: Cache analysis configuration
+cache:
+  enabled: false
+  analysis_interval: 30s
+  cache_hit_threshold: 10ms
+  recursive_servers: []
+  ttl_tracking: true
+  cache_efficiency_metrics: true
+  detection_methods:
+    - "timing"
+    - "ttl"
+    - "pattern"
+
+# Optional: Network analysis configuration
+network:
+  enabled: false
+  packet_loss_detection: false
+  jitter_calculation: false
+  ping_integration: false
+  network_timeouts: 10s
+  packet_loss_threshold: 0.05
+  jitter_threshold: 50ms
+  sample_size: 100
+  network_interfaces: []

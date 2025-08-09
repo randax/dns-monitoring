@@ -1,0 +1,393 @@
+name: Build Linux Packages
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build (e.g., v1.0.0)'
+        required: true
+        type: string
+
+env:
+  GO_VERSION: '1.21'
+
+jobs:
+  build-rpm:
+    name: Build RPM Packages
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - dist: fedora
+            version: 39
+            arch: x86_64
+          - dist: fedora
+            version: 40
+            arch: x86_64
+          - dist: centos
+            version: stream9
+            arch: x86_64
+          - dist: rockylinux
+            version: 9
+            arch: x86_64
+          - dist: almalinux
+            version: 9
+            arch: x86_64
+
+    container:
+      image: ${{ matrix.dist == 'centos' && 'quay.io/centos/centos' || matrix.dist }}:${{ matrix.version }}
+
+    steps:
+      - name: Install dependencies
+        run: |
+          if [[ "${{ matrix.dist }}" == "fedora" ]]; then
+            dnf install -y rpm-build golang git make gcc libpcap-devel systemd-rpm-macros createrepo
+          else
+            dnf install -y epel-release
+            dnf install -y rpm-build golang git make gcc libpcap-devel systemd-rpm-macros createrepo
+          fi
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set version
+        id: version
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            VERSION="${{ github.ref_name }}"
+          else
+            VERSION="${{ github.event.inputs.version }}"
+          fi
+          echo "version=${VERSION#v}" >> $GITHUB_OUTPUT
+          echo "tag=${VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Build RPM
+        run: |
+          # Setup RPM build tree
+          mkdir -p ~/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
+          
+          # Create source tarball
+          TAR_NAME="dns-monitor-${{ steps.version.outputs.version }}"
+          mkdir -p /tmp/${TAR_NAME}
+          cp -r . /tmp/${TAR_NAME}/
+          cd /tmp
+          tar -czf ~/rpmbuild/SOURCES/${TAR_NAME}.tar.gz ${TAR_NAME}
+          
+          # Copy spec file
+          cp $GITHUB_WORKSPACE/packaging/rpm/dns-monitor.spec ~/rpmbuild/SPECS/
+          
+          # Build RPM
+          rpmbuild -ba \
+            --define "_version ${{ steps.version.outputs.version }}" \
+            --define "_commit ${{ github.sha }}" \
+            --define "_arch ${{ matrix.arch }}" \
+            ~/rpmbuild/SPECS/dns-monitor.spec
+          
+          # Copy RPMs to workspace
+          mkdir -p $GITHUB_WORKSPACE/dist/rpm
+          find ~/rpmbuild -name "*.rpm" -exec cp {} $GITHUB_WORKSPACE/dist/rpm/ \;
+          
+          # Generate repository metadata
+          createrepo $GITHUB_WORKSPACE/dist/rpm
+
+      - name: Generate checksums
+        run: |
+          cd dist/rpm
+          for file in *.rpm; do
+            sha256sum "$file" > "$file.sha256"
+            md5sum "$file" > "$file.md5"
+          done
+
+      - name: Upload RPM artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpm-${{ matrix.dist }}-${{ matrix.version }}-${{ matrix.arch }}
+          path: |
+            dist/rpm/*.rpm
+            dist/rpm/*.sha256
+            dist/rpm/*.md5
+            dist/rpm/repodata/
+          retention-days: 30
+
+  build-deb:
+    name: Build DEB Packages
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - dist: ubuntu
+            version: '22.04'
+            arch: amd64
+          - dist: ubuntu
+            version: '24.04'
+            arch: amd64
+          - dist: debian
+            version: '11'
+            arch: amd64
+          - dist: debian
+            version: '12'
+            arch: amd64
+
+    container:
+      image: ${{ matrix.dist }}:${{ matrix.version }}
+
+    steps:
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y build-essential golang git libpcap-dev fakeroot dpkg-dev debhelper
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set version
+        id: version
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            VERSION="${{ github.ref_name }}"
+          else
+            VERSION="${{ github.event.inputs.version }}"
+          fi
+          echo "version=${VERSION#v}" >> $GITHUB_OUTPUT
+          echo "tag=${VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Build DEB
+        run: |
+          # Run the build script
+          bash packaging/deb/build-deb.sh "${{ steps.version.outputs.tag }}" "${{ github.sha }}" "1" "${{ matrix.arch }}"
+
+      - name: Upload DEB artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb-${{ matrix.dist }}-${{ matrix.version }}-${{ matrix.arch }}
+          path: |
+            dist/deb/*.deb
+            dist/deb/*.sha256
+            dist/deb/*.md5
+          retention-days: 30
+
+  build-arch:
+    name: Build Arch Linux Package
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+
+    steps:
+      - name: Install dependencies
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm base-devel go git libpcap
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set version
+        id: version
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            VERSION="${{ github.ref_name }}"
+          else
+            VERSION="${{ github.event.inputs.version }}"
+          fi
+          echo "version=${VERSION#v}" >> $GITHUB_OUTPUT
+
+      - name: Create PKGBUILD
+        run: |
+          cat > PKGBUILD <<'EOF'
+          # Maintainer: DNS Monitor Contributors <noreply@example.com>
+          pkgname=dns-monitor
+          pkgver=${{ steps.version.outputs.version }}
+          pkgrel=1
+          pkgdesc="Comprehensive DNS monitoring solution"
+          arch=('x86_64' 'aarch64')
+          url="https://github.com/randax/dns-monitoring"
+          license=('Apache')
+          depends=('libpcap')
+          makedepends=('go' 'git')
+          source=("$pkgname-$pkgver.tar.gz::https://github.com/randax/dns-monitoring/archive/v$pkgver.tar.gz")
+          sha256sums=('SKIP')
+          
+          build() {
+              cd "$srcdir/$pkgname-$pkgver"
+              export CGO_ENABLED=1
+              export GOFLAGS="-buildmode=pie -trimpath -mod=readonly -modcacherw"
+              go build -v \
+                  -ldflags="-linkmode=external -s -w -X main.Version=$pkgver" \
+                  -o dns-monitor \
+                  ./cmd/dns-monitoring
+          }
+          
+          package() {
+              cd "$srcdir/$pkgname-$pkgver"
+              
+              install -Dm755 dns-monitor "$pkgdir/usr/bin/dns-monitor"
+              install -Dm644 config.yaml "$pkgdir/etc/dns-monitor/config.yaml"
+              install -Dm644 config-minimal.yaml "$pkgdir/etc/dns-monitor/config-minimal.yaml"
+              install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+              install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+              
+              # Install systemd service
+              install -Dm644 /dev/stdin "$pkgdir/usr/lib/systemd/system/dns-monitor.service" <<EEOF
+          [Unit]
+          Description=DNS Monitoring Service
+          After=network-online.target
+          Wants=network-online.target
+          
+          [Service]
+          Type=simple
+          User=dns-monitor
+          Group=dns-monitor
+          ExecStart=/usr/bin/dns-monitor monitor -c /etc/dns-monitor/config.yaml
+          Restart=on-failure
+          RestartSec=10
+          
+          [Install]
+          WantedBy=multi-user.target
+          EEOF
+          }
+          EOF
+
+      - name: Build package
+        run: |
+          # Create source tarball for PKGBUILD
+          tar -czf dns-monitor-${{ steps.version.outputs.version }}.tar.gz \
+            --transform "s,^,dns-monitor-${{ steps.version.outputs.version }}/," \
+            --exclude=.git --exclude=dist .
+          
+          # Build as non-root user
+          useradd -m builder
+          chown -R builder:builder .
+          su builder -c "makepkg -f --noconfirm"
+          
+          # Create output directory
+          mkdir -p dist/arch
+          mv *.pkg.tar.* dist/arch/
+
+      - name: Generate checksums
+        run: |
+          cd dist/arch
+          for file in *.pkg.tar.*; do
+            sha256sum "$file" > "$file.sha256"
+            md5sum "$file" > "$file.md5"
+          done
+
+      - name: Upload Arch artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: arch-package
+          path: |
+            dist/arch/*.pkg.tar.*
+            dist/arch/*.sha256
+            dist/arch/*.md5
+          retention-days: 30
+
+  create-package-release:
+    name: Create Package Release
+    needs: [build-rpm, build-deb, build-arch]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Prepare release files
+        run: |
+          mkdir -p release/rpm release/deb release/arch
+          
+          # Organize packages by type
+          find artifacts -name "*.rpm" -exec cp {} release/rpm/ \;
+          find artifacts -name "*.deb" -exec cp {} release/deb/ \;
+          find artifacts -name "*.pkg.tar.*" -exec cp {} release/arch/ \;
+          
+          # Copy checksums
+          find artifacts -name "*.sha256" -o -name "*.md5" | while read file; do
+            if [[ "$file" == *rpm* ]]; then
+              cp "$file" release/rpm/
+            elif [[ "$file" == *deb* ]]; then
+              cp "$file" release/deb/
+            elif [[ "$file" == *arch* ]]; then
+              cp "$file" release/arch/
+            fi
+          done
+          
+          # Create package index files
+          cat > release/PACKAGES.md <<EOF
+          # DNS Monitor Linux Packages
+          
+          ## RPM Packages (Fedora, CentOS, RHEL, Rocky, Alma)
+          \`\`\`bash
+          # Install with DNF/YUM
+          sudo dnf install ./rpm/dns-monitor-*.rpm
+          # or
+          sudo yum install ./rpm/dns-monitor-*.rpm
+          \`\`\`
+          
+          ## DEB Packages (Ubuntu, Debian)
+          \`\`\`bash
+          # Install with APT
+          sudo apt install ./deb/dns-monitor_*.deb
+          # or
+          sudo dpkg -i ./deb/dns-monitor_*.deb
+          \`\`\`
+          
+          ## Arch Linux Packages
+          \`\`\`bash
+          # Install with Pacman
+          sudo pacman -U ./arch/dns-monitor-*.pkg.tar.zst
+          \`\`\`
+          
+          ## Package Contents
+          - Binary: /usr/bin/dns-monitor
+          - Config: /etc/dns-monitor/config.yaml
+          - Service: systemd service (dns-monitor.service)
+          - Docs: /usr/share/doc/dns-monitor/
+          
+          ## Post-Installation
+          1. Edit configuration: \`sudo nano /etc/dns-monitor/config.yaml\`
+          2. Start service: \`sudo systemctl start dns-monitor\`
+          3. Enable at boot: \`sudo systemctl enable dns-monitor\`
+          4. Check status: \`sudo systemctl status dns-monitor\`
+          EOF
+
+      - name: Create package archives
+        run: |
+          cd release
+          tar -czf dns-monitor-packages-rpm.tar.gz rpm/
+          tar -czf dns-monitor-packages-deb.tar.gz deb/
+          tar -czf dns-monitor-packages-arch.tar.gz arch/
+          
+          # Generate checksums for archives
+          sha256sum *.tar.gz > checksums.sha256
+          md5sum *.tar.gz > checksums.md5
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            release/*.tar.gz
+            release/checksums.*
+            release/PACKAGES.md
+          body: |
+            ## Linux Package Downloads
+            
+            This release includes native Linux packages for:
+            - RPM-based distributions (Fedora, CentOS, RHEL, Rocky Linux, AlmaLinux)
+            - DEB-based distributions (Ubuntu, Debian)
+            - Arch Linux
+            
+            Download the appropriate package archive for your distribution.
+          append_body: true

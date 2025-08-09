@@ -1,0 +1,269 @@
+name: Manual Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., v1.0.0)'
+        required: true
+        type: string
+      prerelease:
+        description: 'Mark as pre-release'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  GO_VERSION: '1.21'
+  BINARY_NAME: 'dns-monitor'
+
+jobs:
+  create-tag:
+    name: Create Tag
+    runs-on: ubuntu-latest
+    outputs:
+      tag_created: ${{ steps.create_tag.outputs.tag_created }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Create and push tag
+        id: create_tag
+        run: |
+          # Check if tag already exists
+          if git rev-parse "${{ github.event.inputs.version }}" >/dev/null 2>&1; then
+            echo "Tag ${{ github.event.inputs.version }} already exists"
+            echo "tag_created=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          # Create tag
+          git tag -a "${{ github.event.inputs.version }}" -m "Release ${{ github.event.inputs.version }}"
+          git push origin "${{ github.event.inputs.version }}"
+          echo "tag_created=true" >> $GITHUB_OUTPUT
+
+  build-binaries:
+    name: Build ${{ matrix.os }}-${{ matrix.arch }}
+    needs: create-tag
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          # Linux
+          - os: linux
+            arch: amd64
+          - os: linux
+            arch: arm64
+          - os: linux
+            arch: arm
+            arm: '7'
+          
+          # Windows
+          - os: windows
+            arch: amd64
+            ext: '.exe'
+          - os: windows
+            arch: arm64
+            ext: '.exe'
+          
+          # macOS
+          - os: darwin
+            arch: amd64
+          - os: darwin
+            arch: arm64
+          
+          # FreeBSD
+          - os: freebsd
+            arch: amd64
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.version }}
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+          GOARM: ${{ matrix.arm }}
+          CGO_ENABLED: 0
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          BUILD_TIME=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+          GIT_COMMIT=$(git rev-parse HEAD)
+          
+          # Build binary
+          go build -v \
+            -ldflags="-s -w \
+              -X 'main.Version=${VERSION}' \
+              -X 'main.BuildTime=${BUILD_TIME}' \
+              -X 'main.GitCommit=${GIT_COMMIT}' \
+              -X 'main.Platform=${{ matrix.os }}/${{ matrix.arch }}'" \
+            -o "${{ env.BINARY_NAME }}-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }}" \
+            ./cmd/dns-monitoring
+
+      - name: Create archive
+        run: |
+          mkdir -p dist
+          cp ${{ env.BINARY_NAME }}-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }} dist/
+          cp README.md LICENSE config*.yaml dist/ 2>/dev/null || true
+          cp -r examples docs dist/ 2>/dev/null || true
+          
+          cd dist
+          if [[ "${{ matrix.os }}" == "windows" ]]; then
+            zip -r ../${{ env.BINARY_NAME }}-${{ github.event.inputs.version }}-${{ matrix.os }}-${{ matrix.arch }}.zip .
+          else
+            tar -czf ../${{ env.BINARY_NAME }}-${{ github.event.inputs.version }}-${{ matrix.os }}-${{ matrix.arch }}.tar.gz .
+          fi
+          cd ..
+
+      - name: Calculate checksums
+        run: |
+          if [[ "${{ matrix.os }}" == "windows" ]]; then
+            FILE="${{ env.BINARY_NAME }}-${{ github.event.inputs.version }}-${{ matrix.os }}-${{ matrix.arch }}.zip"
+          else
+            FILE="${{ env.BINARY_NAME }}-${{ github.event.inputs.version }}-${{ matrix.os }}-${{ matrix.arch }}.tar.gz"
+          fi
+          sha256sum ${FILE} > ${FILE}.sha256
+          md5sum ${FILE} > ${FILE}.md5
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.os }}-${{ matrix.arch }}
+          path: |
+            *.tar.gz
+            *.zip
+            *.sha256
+            *.md5
+          retention-days: 7
+
+  create-release:
+    name: Create GitHub Release
+    needs: build-binaries
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.version }}
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Prepare release files
+        run: |
+          mkdir -p release
+          find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" -o -name "*.sha256" -o -name "*.md5" \) -exec cp {} release/ \;
+          ls -la release/
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # Get previous tag
+          PREV_TAG=$(git describe --tags --abbrev=0 ${{ github.event.inputs.version }}^ 2>/dev/null || echo "")
+          
+          if [ -n "$PREV_TAG" ]; then
+            echo "## Changes since ${PREV_TAG}" > CHANGELOG.md
+            echo "" >> CHANGELOG.md
+            git log ${PREV_TAG}..${{ github.event.inputs.version }} --pretty=format:"* %s (%h)" >> CHANGELOG.md
+          else
+            echo "## Initial Release" > CHANGELOG.md
+            echo "" >> CHANGELOG.md
+            echo "* First release of DNS Monitor" >> CHANGELOG.md
+          fi
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.event.inputs.version }}
+          name: DNS Monitor ${{ github.event.inputs.version }}
+          body_path: CHANGELOG.md
+          draft: false
+          prerelease: ${{ github.event.inputs.prerelease }}
+          files: release/*
+          generate_release_notes: true
+
+  build-docker:
+    name: Build Docker Images
+    needs: create-tag
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.version }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+        continue-on-error: true
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ghcr.io/${{ github.repository_owner }}/dns-monitor
+            ${{ secrets.DOCKER_USERNAME }}/dns-monitor
+          tags: |
+            type=raw,value=${{ github.event.inputs.version }}
+            type=raw,value=latest,enable=${{ github.event.inputs.prerelease == 'false' }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.multiarch
+          platforms: linux/amd64,linux/arm64,linux/arm/v7
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VERSION=${{ github.event.inputs.version }}
+            BUILD_TIME=${{ github.event.head_commit.timestamp }}
+            GIT_COMMIT=${{ github.sha }}

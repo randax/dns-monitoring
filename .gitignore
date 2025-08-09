@@ -1,0 +1,226 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+coverage.txt
+coverage.html
+*.cov
+
+# Dependency directories
+vendor/
+
+# Go workspace file
+go.work
+go.work.sum
+
+# Build directories and artifacts
+build/
+dist/
+bin/
+target/
+
+# Main binary
+dns-monitor
+dns-monitor-*
+dns-monitoring
+
+# IDE and editor files
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+.project
+.classpath
+.settings/
+*.sublime-*
+
+# Environment and configuration files (keep templates)
+.env
+.env.local
+.env.*.local
+config.local.yaml
+config.prod.yaml
+config.dev.yaml
+*.local.yaml
+!config.yaml
+!config-minimal.yaml
+!examples/*.yaml
+
+# Log files
+*.log
+logs/
+*.log.*
+log/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+*.bak
+*.backup
+*.old
+*.orig
+
+# Test data and output
+testdata/output/
+test-results/
+*.test.json
+*.test.xml
+benchmark-results/
+
+# Monitoring output files
+metrics.json
+metrics.csv
+output.json
+output.csv
+results/
+
+# Packet capture files
+*.pcap
+*.pcapng
+*.cap
+
+# Prometheus data
+data/
+prometheus-data/
+
+# Zabbix files
+zabbix-sender.log
+zabbix-data/
+
+# Documentation build
+docs/_build/
+docs/.build/
+*.pdf
+
+# Archive files
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.rar
+*.7z
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Desktop.ini
+
+# Debug files
+debug
+debug.test
+*.pprof
+*.mem
+*.cpu
+*.trace
+*.heap
+
+# Generated files
+*.generated.go
+*_gen.go
+
+# Certificates and keys (NEVER commit these)
+*.pem
+*.key
+*.crt
+*.cer
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.truststore
+tls/
+certs/
+ssl/
+
+# Sensitive configuration
+secrets.yaml
+secrets.json
+credentials.yaml
+credentials.json
+auth.yaml
+auth.json
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Cache directories
+.cache/
+cache/
+
+# Runtime directories
+run/
+pid/
+*.pid
+
+# Kubernetes
+*.kubeconfig
+kubeconfig
+.kube/
+
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+
+# Python (for any scripts)
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+
+# Node.js (for any web UI)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Grafana
+grafana-storage/
+grafana.db
+
+# Project specific
+dns-monitor.pid
+dns-monitor.state
+monitoring-state.json
+*.state.json
+sample-data/
+captured-packets/
+analysis-results/
+
+# Allow example and documentation files
+!examples/**
+!docs/**
+!cmd/**
+!internal/**
+!pkg/**
+!scripts/**
+!Dockerfile
+!docker-compose.yml
+!Makefile
+!README.md
+!LICENSE
+!CHANGELOG.md
+!go.mod
+!go.sum

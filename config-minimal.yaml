@@ -1,0 +1,59 @@
+# DNS Monitoring - Minimal Configuration Template
+# This is a production-ready minimal configuration
+# For detailed documentation and all options, see config.yaml
+
+dns:
+  servers:
+    - name: cloudflare
+      address: 1.1.1.1:53
+      protocol: udp
+      enabled: true
+    - name: google
+      address: 8.8.8.8:53
+      protocol: udp
+      enabled: true
+
+  domains:
+    - example.com
+    - google.com
+
+  query_types:
+    - A
+    - AAAA
+
+monitor:
+  interval: 30s
+  timeout: 5s
+  concurrent_queries: 10
+
+exporters:
+  cli:
+    enabled: true
+    show_colors: true
+  
+  prometheus:
+    enabled: false
+    listen_address: :9090
+    metrics_path: /metrics
+  
+  zabbix:
+    enabled: false
+    server: localhost
+    port: 10051
+    hostname: dns-monitor
+
+cache:
+  enabled: false
+
+network:
+  enabled: false
+
+passive:
+  enabled: false
+
+sampling:
+  enabled: false
+
+logging:
+  level: info
+  output: stdout

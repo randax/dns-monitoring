@@ -1,0 +1,117 @@
+# Example configuration for DNS monitoring with secure Prometheus exporter
+dns:
+  servers:
+    - name: "Google DNS"
+      address: "8.8.8.8"
+      port: 53
+      enabled: true
+      protocol: "udp"
+    - name: "Cloudflare DNS"
+      address: "1.1.1.1"
+      port: 53
+      enabled: true
+      protocol: "udp"
+  
+  queries:
+    types: ["A", "AAAA"]
+    domains: ["example.com", "google.com"]
+    timeout: 5s
+    retries: 3
+
+monitor:
+  interval: 30s
+  max_concurrent: 10
+  alert_threshold: 3
+
+output:
+  format: "json"
+  console: true
+  buffer_size: 1000
+  cli:
+    show_colors: true
+    detailed_view: false
+    refresh_interval: 10s
+
+metrics:
+  enabled: true
+  window_duration: 15m
+  max_stored_results: 100000
+  calculation_interval: 10s
+  enabled_metrics: ["latency", "rates", "throughput", "distribution"]
+  
+  export:
+    prometheus:
+      enabled: true
+      port: 9090
+      path: "/metrics"
+      update_interval: 30s
+      include_server_labels: true
+      include_protocol_labels: true
+      metric_prefix: "dns"
+      
+      # Security Configuration
+      security:
+        # Basic Authentication
+        # Protect metrics endpoint with username/password
+        basic_auth:
+          enabled: true
+          users:
+            # In production, use hashed passwords or external auth
+            prometheus: "secure_password_123"
+            admin: "admin_password_456"
+          realm: "DNS Monitoring Metrics"
+        
+        # TLS Configuration
+        # Enable HTTPS for the metrics endpoint
+        tls:
+          enabled: false  # Set to true when certificates are available
+          cert_file: "/path/to/server.crt"
+          key_file: "/path/to/server.key"
+          # Optional: require client certificates
+          client_auth: false
+          client_ca_cert_files:
+            - "/path/to/client-ca.crt"
+        
+        # Rate Limiting
+        # Prevent excessive requests to the metrics endpoint
+        rate_limit:
+          enabled: true
+          requests_per_min: 60
+          burst_size: 30
+          per_ip: true  # Apply limits per IP address
+          whitelist_ips:
+            - "127.0.0.1"
+            - "10.0.0.0/8"     # Whitelist internal network
+            - "192.168.0.0/16"
+          cleanup_interval: 1m
+        
+        # Request Logging
+        # Log requests for debugging and audit purposes
+        request_logging:
+          enabled: true
+          log_level: "info"  # debug, info, warn, error
+          log_headers: false  # Set to true to log request headers
+          log_body: false     # Set to true to log request body
+          exclude_paths:      # Don't log these paths
+            - "/health"
+            - "/ready"
+          slow_request_threshold: 5s  # Log requests taking longer than this
+
+# Example TLS certificate generation (for testing):
+# openssl req -x509 -newkey rsa:4096 -keyout server.key -out server.crt -days 365 -nodes
+# 
+# Example usage with curl:
+# Basic auth: curl -u prometheus:secure_password_123 http://localhost:9090/metrics
+# With TLS: curl -u prometheus:secure_password_123 https://localhost:9090/metrics --insecure
+#
+# Prometheus scrape config example:
+# scrape_configs:
+#   - job_name: 'dns-monitor'
+#     static_configs:
+#       - targets: ['localhost:9090']
+#     basic_auth:
+#       username: 'prometheus'
+#       password: 'secure_password_123'
+#     scheme: https  # When TLS is enabled
+#     tls_config:
+#       insecure_skip_verify: true  # For self-signed certificates

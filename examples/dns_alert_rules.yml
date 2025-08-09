@@ -1,0 +1,260 @@
+# Prometheus Alert Rules for DNS Monitoring
+# Place this file in the location specified in prometheus.yml rule_files
+
+groups:
+  - name: dns_performance
+    interval: 30s
+    rules:
+      # Alert when 95th percentile latency exceeds threshold
+      - alert: HighDNSLatency
+        expr: dns_latency_p95_seconds > 0.5
+        for: 5m
+        labels:
+          severity: warning
+          component: dns
+        annotations:
+          summary: "High DNS query latency detected"
+          description: "DNS 95th percentile latency is {{ $value | humanizeDuration }} (threshold: 500ms)"
+          runbook_url: "https://wiki.example.com/runbooks/dns/high-latency"
+      
+      # Critical alert for very high latency
+      - alert: CriticalDNSLatency
+        expr: dns_latency_p99_seconds > 2
+        for: 2m
+        labels:
+          severity: critical
+          component: dns
+          page: "true"
+        annotations:
+          summary: "Critical DNS query latency"
+          description: "DNS 99th percentile latency is {{ $value | humanizeDuration }} (threshold: 2s)"
+          runbook_url: "https://wiki.example.com/runbooks/dns/critical-latency"
+      
+      # Alert on mean latency trends
+      - alert: DNSLatencyTrend
+        expr: rate(dns_latency_mean_seconds[15m]) > 0.1
+        for: 15m
+        labels:
+          severity: info
+          component: dns
+        annotations:
+          summary: "DNS latency increasing"
+          description: "DNS mean latency has been increasing at {{ $value | humanizeDuration }}/sec for 15 minutes"
+
+  - name: dns_availability
+    interval: 30s
+    rules:
+      # Alert on high error rate
+      - alert: HighDNSErrorRate
+        expr: (rate(dns_error_total[5m]) / rate(dns_queries_total[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          component: dns
+        annotations:
+          summary: "High DNS error rate"
+          description: "DNS error rate is {{ $value | humanizePercentage }} (threshold: 5%)"
+          runbook_url: "https://wiki.example.com/runbooks/dns/high-error-rate"
+      
+      # Critical alert for very high error rate
+      - alert: CriticalDNSErrorRate
+        expr: (rate(dns_error_total[5m]) / rate(dns_queries_total[5m])) > 0.20
+        for: 2m
+        labels:
+          severity: critical
+          component: dns
+          page: "true"
+        annotations:
+          summary: "Critical DNS error rate"
+          description: "DNS error rate is {{ $value | humanizePercentage }} (threshold: 20%)"
+          runbook_url: "https://wiki.example.com/runbooks/dns/critical-error-rate"
+      
+      # Alert when specific DNS server has high error rate
+      - alert: DNSServerHighErrorRate
+        expr: |
+          (
+            rate(dns_error_total{server!=""}[5m]) 
+            / 
+            rate(dns_queries_total{server!=""}[5m])
+          ) > 0.10
+        for: 5m
+        labels:
+          severity: warning
+          component: dns
+        annotations:
+          summary: "DNS server {{ $labels.server }} has high error rate"
+          description: "Server {{ $labels.server }} error rate is {{ $value | humanizePercentage }}"
+      
+      # Alert on specific response codes
+      - alert: HighNXDOMAINRate
+        expr: rate(dns_response_code_total{code="NXDOMAIN"}[5m]) > 10
+        for: 10m
+        labels:
+          severity: info
+          component: dns
+        annotations:
+          summary: "High NXDOMAIN response rate"
+          description: "NXDOMAIN responses at {{ $value | humanize }} per second"
+      
+      - alert: HighSERVFAILRate
+        expr: rate(dns_response_code_total{code="SERVFAIL"}[5m]) > 1
+        for: 5m
+        labels:
+          severity: warning
+          component: dns
+        annotations:
+          summary: "High SERVFAIL response rate"
+          description: "SERVFAIL responses at {{ $value | humanize }} per second indicates DNS server issues"
+
+  - name: dns_throughput
+    interval: 30s
+    rules:
+      # Alert on low query rate (possible monitoring failure)
+      - alert: LowDNSQueryRate
+        expr: rate(dns_queries_total[5m]) < 0.1
+        for: 10m
+        labels:
+          severity: warning
+          component: dns
+          category: monitoring
+        annotations:
+          summary: "DNS monitoring query rate too low"
+          description: "DNS query rate is {{ $value | humanize }} queries/sec (expected > 0.1)"
+      
+      # Alert when monitoring stops
+      - alert: DNSMonitoringDown
+        expr: up{job="dns-monitor"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: dns
+          category: monitoring
+          page: "true"
+        annotations:
+          summary: "DNS monitor is down"
+          description: "DNS monitoring has been down for {{ $value }} minutes"
+          runbook_url: "https://wiki.example.com/runbooks/dns/monitor-down"
+      
+      # Alert on monitoring staleness
+      - alert: DNSMetricsStale
+        expr: (time() - dns_queries_total) > 120
+        for: 5m
+        labels:
+          severity: warning
+          component: dns
+          category: monitoring
+        annotations:
+          summary: "DNS metrics are stale"
+          description: "DNS metrics haven't been updated for {{ $value | humanizeDuration }}"
+
+  - name: dns_cache_performance
+    interval: 30s
+    rules:
+      # Alert on low cache hit ratio (if cache monitoring enabled)
+      - alert: LowDNSCacheHitRatio
+        expr: dns_cache_hit_ratio < 0.30
+        for: 15m
+        labels:
+          severity: info
+          component: dns
+          category: performance
+        annotations:
+          summary: "Low DNS cache hit ratio"
+          description: "DNS cache hit ratio is {{ $value | humanizePercentage }} (expected > 30%)"
+      
+      # Alert on cache detection issues
+      - alert: DNSCacheDetectionFailure
+        expr: increase(dns_cache_hits_total[1h]) == 0 and dns_cacheable_queries_total > 100
+        for: 1h
+        labels:
+          severity: info
+          component: dns
+          category: monitoring
+        annotations:
+          summary: "DNS cache detection may not be working"
+          description: "No cache hits detected in the last hour despite cacheable queries"
+
+  - name: dns_network_issues
+    interval: 30s
+    rules:
+      # Alert on packet loss (if network monitoring enabled)
+      - alert: HighDNSPacketLoss
+        expr: dns_network_packet_loss_ratio > 0.02
+        for: 5m
+        labels:
+          severity: warning
+          component: dns
+          category: network
+        annotations:
+          summary: "High packet loss on {{ $labels.interface }}"
+          description: "Packet loss ratio is {{ $value | humanizePercentage }} (threshold: 2%)"
+      
+      # Alert on high jitter
+      - alert: HighNetworkJitter
+        expr: dns_network_jitter_seconds > 0.050
+        for: 10m
+        labels:
+          severity: info
+          component: dns
+          category: network
+        annotations:
+          summary: "High network jitter on {{ $labels.interface }}"
+          description: "Network jitter is {{ $value | humanizeDuration }} (threshold: 50ms)"
+
+  - name: dns_protocol_specific
+    interval: 30s
+    rules:
+      # Alert on DoH-specific issues
+      - alert: DoHHighLatency
+        expr: dns_latency_p95_seconds{protocol="doh"} > 1
+        for: 5m
+        labels:
+          severity: warning
+          component: dns
+          protocol: doh
+        annotations:
+          summary: "High DoH query latency"
+          description: "DoH 95th percentile latency is {{ $value | humanizeDuration }}"
+      
+      # Alert on protocol-specific error rates
+      - alert: ProtocolHighErrorRate
+        expr: |
+          (
+            rate(dns_error_total{protocol!=""}[5m]) 
+            / 
+            rate(dns_queries_total{protocol!=""}[5m])
+          ) > 0.10
+        for: 5m
+        labels:
+          severity: warning
+          component: dns
+        annotations:
+          summary: "High error rate for {{ $labels.protocol }} protocol"
+          description: "{{ $labels.protocol }} error rate is {{ $value | humanizePercentage }}"
+
+  - name: dns_capacity
+    interval: 30s
+    rules:
+      # Alert on query rate approaching limits
+      - alert: HighDNSQueryLoad
+        expr: rate(dns_queries_total[1m]) > 1000
+        for: 5m
+        labels:
+          severity: info
+          component: dns
+          category: capacity
+        annotations:
+          summary: "High DNS query load"
+          description: "DNS query rate is {{ $value | humanize }} queries/sec"
+      
+      # Alert on metrics collection issues
+      - alert: DNSMetricsBufferFull
+        expr: increase(dns_metrics_dropped_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+          component: dns
+          category: monitoring
+        annotations:
+          summary: "DNS metrics being dropped"
+          description: "{{ $value | humanize }} metrics dropped in last 5 minutes"
