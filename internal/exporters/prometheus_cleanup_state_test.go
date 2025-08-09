@@ -137,7 +137,7 @@ func TestPrometheusCounterStateMapSizeMonitoring(t *testing.T) {
 	collector := &mockMetricsCollector{
 		metrics: &metrics.Metrics{
 			QueryType: metrics.QueryTypeDistribution{},
-			Network: metrics.NetworkMetrics{
+			Network: &metrics.NetworkMetrics{
 				InterfaceStats: make(map[string]metrics.NetworkInterfaceStats),
 			},
 		},

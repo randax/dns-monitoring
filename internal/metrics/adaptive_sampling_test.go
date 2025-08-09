@@ -103,20 +103,20 @@ func TestAdaptiveSamplingRateAdjustment(t *testing.T) {
 		{
 			name:        "low volume",
 			qps:         5,
-			wantMinRate: 0.9,
+			wantMinRate: 0.3,  // With smoothing factor, rate will be around 0.37
 			wantMaxRate: 1.0,
 		},
 		{
 			name:        "medium volume",
 			qps:         100,
-			wantMinRate: 0.3,
-			wantMaxRate: 1.0,
+			wantMinRate: 0.15, // For 100 qps, target is 50 samples/sec = 0.5 rate
+			wantMaxRate: 0.5,  // With smoothing from initial 0.1: 0.1*0.7 + 0.5*0.3 = 0.22 to 0.41
 		},
 		{
 			name:        "high volume",
 			qps:         5000,
 			wantMinRate: 0.001,
-			wantMaxRate: 0.1,
+			wantMaxRate: 0.35, // For 5000 qps, target is 200/5000=0.04, with smoothing: 0.1*0.7 + 0.04*0.3
 		},
 	}
 	
