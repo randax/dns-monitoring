@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -22,12 +23,12 @@ type ZabbixSender struct {
 	port    int
 	timeout time.Duration
 	
-	conn    net.Conn
-	mu      sync.Mutex
-	
-	connPool   chan net.Conn
-	poolSize   int
+	// Connection pool management
+	connPool    chan net.Conn
 	maxPoolSize int
+	poolMu      sync.RWMutex
+	poolSize    int32
+	closed      bool
 }
 
 func NewZabbixSender(server string, port int, timeout time.Duration) *ZabbixSender {
@@ -37,64 +38,119 @@ func NewZabbixSender(server string, port int, timeout time.Duration) *ZabbixSend
 		timeout:     timeout,
 		maxPoolSize: 5,
 		connPool:    make(chan net.Conn, 5),
+		poolSize:    0,
+		closed:      false,
 	}
 }
 
 func (s *ZabbixSender) Connect() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	
-	if s.conn != nil {
-		return nil // Already connected
-	}
-	
-	address := fmt.Sprintf("%s:%d", s.server, s.port)
-	conn, err := net.DialTimeout("tcp", address, s.timeout)
+	// Test connectivity by creating and validating a connection
+	conn, err := s.createConnection()
 	if err != nil {
-		return fmt.Errorf("failed to connect to Zabbix server %s: %w", address, err)
+		return err
 	}
 	
-	s.conn = conn
+	// Return the connection to the pool
+	s.returnConnection(conn)
 	return nil
 }
 
-func (s *ZabbixSender) getConnection() (net.Conn, error) {
-	// Try to get a connection from the pool
-	select {
-	case conn := <-s.connPool:
-		// Test if connection is still alive
-		conn.SetDeadline(time.Now().Add(time.Millisecond))
-		if _, err := conn.Write([]byte{}); err == nil {
-			conn.SetDeadline(time.Time{})
-			return conn, nil
-		}
-		// Connection is dead, close it
-		conn.Close()
-	default:
-		// Pool is empty or doesn't have available connections
-	}
-	
-	// Create a new connection
+func (s *ZabbixSender) createConnection() (net.Conn, error) {
 	address := fmt.Sprintf("%s:%d", s.server, s.port)
 	conn, err := net.DialTimeout("tcp", address, s.timeout)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to Zabbix server %s: %w", address, err)
 	}
-	
 	return conn, nil
 }
 
-func (s *ZabbixSender) returnConnection(conn net.Conn) {
-	if s.poolSize < s.maxPoolSize {
-		select {
-		case s.connPool <- conn:
-			s.poolSize++
-			return
-		default:
-			// Pool is full
+func (s *ZabbixSender) validateConnection(conn net.Conn) bool {
+	// Set a short deadline for the validation
+	if err := conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
+		return false
+	}
+	defer conn.SetReadDeadline(time.Time{})
+	
+	// Try to read one byte with MSG_PEEK (non-destructive read)
+	// If the connection is closed, this will return an error
+	one := make([]byte, 1)
+	if tcpConn, ok := conn.(*net.TCPConn); ok {
+		// For TCP connections, we can use a more reliable method
+		if err := tcpConn.SetKeepAlive(true); err != nil {
+			return false
 		}
 	}
-	conn.Close()
+	
+	// Attempt a zero-byte read to check if connection is still open
+	conn.SetReadDeadline(time.Now())
+	_, err := conn.Read(one[:0])
+	conn.SetReadDeadline(time.Time{})
+	
+	return err == nil || err.Error() == "i/o timeout"
+}
+
+func (s *ZabbixSender) getConnection() (net.Conn, error) {
+	s.poolMu.RLock()
+	if s.closed {
+		s.poolMu.RUnlock()
+		return nil, fmt.Errorf("sender is closed")
+	}
+	s.poolMu.RUnlock()
+	
+	// Try to get a connection from the pool
+	for {
+		select {
+		case conn := <-s.connPool:
+			// Decrement pool size atomically
+			newSize := atomic.AddInt32(&s.poolSize, -1)
+			if newSize < 0 {
+				// This shouldn't happen, but reset if it does
+				atomic.StoreInt32(&s.poolSize, 0)
+			}
+			
+			// Validate the connection
+			if s.validateConnection(conn) {
+				return conn, nil
+			}
+			// Connection is dead, close it and try again
+			conn.Close()
+		default:
+			// Pool is empty, create a new connection
+			return s.createConnection()
+		}
+	}
+}
+
+func (s *ZabbixSender) returnConnection(conn net.Conn) {
+	if conn == nil {
+		return
+	}
+	
+	s.poolMu.RLock()
+	if s.closed {
+		s.poolMu.RUnlock()
+		conn.Close()
+		return
+	}
+	s.poolMu.RUnlock()
+	
+	// Check current pool size
+	currentSize := atomic.LoadInt32(&s.poolSize)
+	if currentSize >= int32(s.maxPoolSize) {
+		// Pool is full, close the connection
+		conn.Close()
+		return
+	}
+	
+	// Try to return the connection to the pool
+	select {
+	case s.connPool <- conn:
+		// Successfully added to pool, increment size
+		atomic.AddInt32(&s.poolSize, 1)
+	default:
+		// Pool channel is full (shouldn't happen if our counting is correct)
+		conn.Close()
+	}
 }
 
 func (s *ZabbixSender) Send(data *ZabbixData) (*ZabbixResponse, error) {
@@ -214,22 +270,29 @@ func (s *ZabbixSender) readResponse(conn net.Conn) (*ZabbixResponse, error) {
 }
 
 func (s *ZabbixSender) Close() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.poolMu.Lock()
+	defer s.poolMu.Unlock()
+	
+	if s.closed {
+		return nil
+	}
+	
+	s.closed = true
 	
 	// Close all pooled connections
-	close(s.connPool)
-	for conn := range s.connPool {
-		conn.Close()
+	// Don't close the channel until we've drained it
+	for {
+		select {
+		case conn := <-s.connPool:
+			if conn != nil {
+				conn.Close()
+			}
+		default:
+			// No more connections in the pool
+			close(s.connPool)
+			return nil
+		}
 	}
-	
-	if s.conn != nil {
-		err := s.conn.Close()
-		s.conn = nil
-		return err
-	}
-	
-	return nil
 }
 
 func (s *ZabbixSender) TestConnection() error {
@@ -237,7 +300,8 @@ func (s *ZabbixSender) TestConnection() error {
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	// Important: return connection to pool instead of closing it
+	defer s.returnConnection(conn)
 	
 	// Send a minimal test packet
 	testItem := ZabbixItem{

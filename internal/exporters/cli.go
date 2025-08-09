@@ -2,6 +2,7 @@ package exporters
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -41,6 +42,14 @@ func (f *CLIFormatter) FormatMetrics(m *metrics.Metrics) string {
 	f.formatSuccessMetrics(&sb, m)
 	f.formatThroughputMetrics(&sb, m)
 
+	// Add cache and network metrics
+	if m.Cache != nil {
+		f.formatCacheMetrics(&sb, m)
+	}
+	if m.Network != nil {
+		f.formatNetworkMetrics(&sb, m)
+	}
+
 	if f.DetailedView {
 		f.formatResponseCodeDistribution(&sb, m)
 		if f.ShowDistributions {
@@ -79,8 +88,10 @@ func (f *CLIFormatter) FormatSummary(m *metrics.Metrics) string {
 }
 
 func (f *CLIFormatter) formatHeader(sb *strings.Builder, m *metrics.Metrics) {
-	sb.WriteString(f.terminal.Clear())
-	sb.WriteString(f.terminal.Bold("DNS Monitoring Dashboard\n"))
+	if clearStr := f.safeTerminalOp(f.terminal.Clear); clearStr != "" {
+		sb.WriteString(clearStr)
+	}
+	sb.WriteString(f.safeTerminalOp(func() string { return f.terminal.Bold("DNS Monitoring Dashboard\n") }))
 	duration := m.Period.End.Sub(m.Period.Start)
 	sb.WriteString(fmt.Sprintf("Updated: %s | Duration: %s\n",
 		time.Now().Format("15:04:05"),
@@ -93,11 +104,11 @@ func (f *CLIFormatter) formatFooter(sb *strings.Builder, m *metrics.Metrics) {
 	sb.WriteString(fmt.Sprintf("Total Queries: %s | Errors: %s | Success Rate: %.2f%%\n",
 		f.formatNumber(m.Rates.TotalQueries),
 		f.formatNumber(m.Rates.ErrorQueries),
-		m.Rates.SuccessRate))
+		f.safePercentage(m.Rates.SuccessRate)))
 }
 
 func (f *CLIFormatter) formatLatencyMetrics(sb *strings.Builder, m *metrics.Metrics) {
-	sb.WriteString(f.terminal.Bold("Latency Metrics:\n"))
+	sb.WriteString(f.safeTerminalOp(func() string { return f.terminal.Bold("Latency Metrics:\n") }))
 
 	latencyData := []struct {
 		label string
@@ -105,10 +116,10 @@ func (f *CLIFormatter) formatLatencyMetrics(sb *strings.Builder, m *metrics.Metr
 		warn  time.Duration
 		crit  time.Duration
 	}{
-		{"  P50 ", time.Duration(m.Latency.P50 * float64(time.Millisecond)), 50 * time.Millisecond, 100 * time.Millisecond},
-		{"  P95 ", time.Duration(m.Latency.P95 * float64(time.Millisecond)), 100 * time.Millisecond, 200 * time.Millisecond},
-		{"  P99 ", time.Duration(m.Latency.P99 * float64(time.Millisecond)), 200 * time.Millisecond, 500 * time.Millisecond},
-		{"  P999", time.Duration(m.Latency.P999 * float64(time.Millisecond)), 500 * time.Millisecond, 1000 * time.Millisecond},
+		{"  P50 ", f.safeLatencyDuration(m.Latency.P50), 50 * time.Millisecond, 100 * time.Millisecond},
+		{"  P95 ", f.safeLatencyDuration(m.Latency.P95), 100 * time.Millisecond, 200 * time.Millisecond},
+		{"  P99 ", f.safeLatencyDuration(m.Latency.P99), 200 * time.Millisecond, 500 * time.Millisecond},
+		{"  P999", f.safeLatencyDuration(m.Latency.P999), 500 * time.Millisecond, 1000 * time.Millisecond},
 	}
 
 	for _, l := range latencyData {
@@ -129,18 +140,18 @@ func (f *CLIFormatter) formatLatencyMetrics(sb *strings.Builder, m *metrics.Metr
 	}
 
 	if f.DetailedView {
-		sb.WriteString(fmt.Sprintf("  Min : %s\n", f.formatDuration(time.Duration(m.Latency.Min * float64(time.Millisecond)))))
-		sb.WriteString(fmt.Sprintf("  Max : %s\n", f.formatDuration(time.Duration(m.Latency.Max * float64(time.Millisecond)))))
-		sb.WriteString(fmt.Sprintf("  Avg : %s\n", f.formatDuration(time.Duration(m.Latency.Mean * float64(time.Millisecond)))))
+		sb.WriteString(fmt.Sprintf("  Min : %s\n", f.formatDuration(f.safeLatencyDuration(m.Latency.Min))))
+		sb.WriteString(fmt.Sprintf("  Max : %s\n", f.formatDuration(f.safeLatencyDuration(m.Latency.Max))))
+		sb.WriteString(fmt.Sprintf("  Avg : %s\n", f.formatDuration(f.safeLatencyDuration(m.Latency.Mean))))
 	}
 	sb.WriteString("\n")
 }
 
 func (f *CLIFormatter) formatSuccessMetrics(sb *strings.Builder, m *metrics.Metrics) {
-	sb.WriteString(f.terminal.Bold("Success Metrics:\n"))
+	sb.WriteString(f.safeTerminalOp(func() string { return f.terminal.Bold("Success Metrics:\n") }))
 
-	successRate := m.Rates.SuccessRate
-	errorRate := m.Rates.ErrorRate
+	successRate := f.safePercentage(m.Rates.SuccessRate)
+	errorRate := f.safePercentage(m.Rates.ErrorRate)
 
 	successColor := f.terminal.Green
 	if successRate < 95 {
@@ -166,10 +177,10 @@ func (f *CLIFormatter) formatSuccessMetrics(sb *strings.Builder, m *metrics.Metr
 }
 
 func (f *CLIFormatter) formatThroughputMetrics(sb *strings.Builder, m *metrics.Metrics) {
-	sb.WriteString(f.terminal.Bold("Throughput:\n"))
-	sb.WriteString(fmt.Sprintf("  Current QPS: %s\n", f.formatQPS(m.Throughput.CurrentQPS)))
-	sb.WriteString(fmt.Sprintf("  Average QPS: %s\n", f.formatQPS(m.Throughput.AverageQPS)))
-	sb.WriteString(fmt.Sprintf("  Peak QPS   : %s\n", f.formatQPS(m.Throughput.PeakQPS)))
+	sb.WriteString(f.safeTerminalOp(func() string { return f.terminal.Bold("Throughput:\n") }))
+	sb.WriteString(fmt.Sprintf("  Current QPS: %s\n", f.formatQPS(f.safeQPS(m.Throughput.CurrentQPS))))
+	sb.WriteString(fmt.Sprintf("  Average QPS: %s\n", f.formatQPS(f.safeQPS(m.Throughput.AverageQPS))))
+	sb.WriteString(fmt.Sprintf("  Peak QPS   : %s\n", f.formatQPS(f.safeQPS(m.Throughput.PeakQPS))))
 	sb.WriteString("\n")
 }
 
@@ -178,7 +189,7 @@ func (f *CLIFormatter) formatResponseCodeDistribution(sb *strings.Builder, m *me
 		return
 	}
 
-	sb.WriteString(f.terminal.Bold("Response Codes:\n"))
+	sb.WriteString(f.safeTerminalOp(func() string { return f.terminal.Bold("Response Codes:\n") }))
 	
 	responseCodes := map[string]int64{
 		"NoError":  m.ResponseCode.NoError,
@@ -194,7 +205,7 @@ func (f *CLIFormatter) formatResponseCodeDistribution(sb *strings.Builder, m *me
 		if count == 0 {
 			continue
 		}
-		percentage := float64(count) / float64(m.ResponseCode.Total) * 100
+		percentage := f.safeDivide(float64(count), float64(m.ResponseCode.Total)) * 100
 		codeStr := code
 		
 		if f.ShowColors {
@@ -217,7 +228,7 @@ func (f *CLIFormatter) formatQueryTypeDistribution(sb *strings.Builder, m *metri
 		return
 	}
 
-	sb.WriteString(f.terminal.Bold("Query Types:\n"))
+	sb.WriteString(f.safeTerminalOp(func() string { return f.terminal.Bold("Query Types:\n") }))
 	
 	queryTypes := map[string]int64{
 		"A":     m.QueryType.A,
@@ -235,8 +246,123 @@ func (f *CLIFormatter) formatQueryTypeDistribution(sb *strings.Builder, m *metri
 		if count == 0 {
 			continue
 		}
-		percentage := float64(count) / float64(m.QueryType.Total) * 100
+		percentage := f.safeDivide(float64(count), float64(m.QueryType.Total)) * 100
 		sb.WriteString(fmt.Sprintf("  %s: %s (%.1f%%)\n", qtype, f.formatNumber(int64(count)), percentage))
+	}
+	sb.WriteString("\n")
+}
+
+func (f *CLIFormatter) formatCacheMetrics(sb *strings.Builder, m *metrics.Metrics) {
+	if m.Cache == nil {
+		return
+	}
+
+	sb.WriteString(f.safeTerminalOp(func() string { return f.terminal.Bold("Cache Performance:\n") }))
+	
+	// Cache hit rate with color coding
+	hitRate := f.safePercentage(m.Cache.HitRate * 100)
+	hitRateStr := fmt.Sprintf("%.1f%%", hitRate)
+	if f.ShowColors {
+		if hitRate >= 80 {
+			hitRateStr = f.terminal.Green(hitRateStr)
+		} else if hitRate >= 50 {
+			hitRateStr = f.terminal.Yellow(hitRateStr)
+		} else {
+			hitRateStr = f.terminal.Red(hitRateStr)
+		}
+	}
+	sb.WriteString(fmt.Sprintf("  Hit Rate   : %s\n", hitRateStr))
+	
+	// Cache efficiency with color coding
+	efficiency := f.safePercentage(m.Cache.Efficiency * 100)
+	efficiencyStr := fmt.Sprintf("%.1f%%", efficiency)
+	if f.ShowColors {
+		if efficiency >= 70 {
+			efficiencyStr = f.terminal.Green(efficiencyStr)
+		} else if efficiency >= 40 {
+			efficiencyStr = f.terminal.Yellow(efficiencyStr)
+		} else {
+			efficiencyStr = f.terminal.Red(efficiencyStr)
+		}
+	}
+	sb.WriteString(fmt.Sprintf("  Efficiency : %s\n", efficiencyStr))
+	
+	// TTL stats
+	if f.DetailedView {
+		sb.WriteString(fmt.Sprintf("  Avg TTL    : %s\n", f.formatDuration(time.Duration(m.Cache.AvgTTL * float64(time.Second)))))
+		sb.WriteString(fmt.Sprintf("  Min TTL    : %s\n", f.formatDuration(time.Duration(m.Cache.MinTTL * float64(time.Second)))))
+		sb.WriteString(fmt.Sprintf("  Max TTL    : %s\n", f.formatDuration(time.Duration(m.Cache.MaxTTL * float64(time.Second)))))
+		sb.WriteString(fmt.Sprintf("  Hits/Misses: %s/%s\n", 
+			f.formatNumber(m.Cache.Hits), 
+			f.formatNumber(m.Cache.Misses)))
+	}
+	sb.WriteString("\n")
+}
+
+func (f *CLIFormatter) formatNetworkMetrics(sb *strings.Builder, m *metrics.Metrics) {
+	if m.Network == nil {
+		return
+	}
+
+	sb.WriteString(f.safeTerminalOp(func() string { return f.terminal.Bold("Network Performance:\n") }))
+	
+	// Packet loss with color coding
+	packetLoss := f.safePercentage(m.Network.PacketLoss * 100)
+	packetLossStr := fmt.Sprintf("%.2f%%", packetLoss)
+	if f.ShowColors {
+		if packetLoss < 1 {
+			packetLossStr = f.terminal.Green(packetLossStr)
+		} else if packetLoss < 5 {
+			packetLossStr = f.terminal.Yellow(packetLossStr)
+		} else {
+			packetLossStr = f.terminal.Red(packetLossStr)
+		}
+	}
+	sb.WriteString(fmt.Sprintf("  Packet Loss: %s\n", packetLossStr))
+	
+	// Network quality score with color coding
+	qualityScore := m.Network.QualityScore
+	qualityStr := fmt.Sprintf("%.0f/100", qualityScore)
+	if f.ShowColors {
+		if qualityScore >= 90 {
+			qualityStr = f.terminal.Green(qualityStr)
+		} else if qualityScore >= 70 {
+			qualityStr = f.terminal.Yellow(qualityStr)
+		} else {
+			qualityStr = f.terminal.Red(qualityStr)
+		}
+	}
+	sb.WriteString(fmt.Sprintf("  Quality    : %s\n", qualityStr))
+	
+	// Jitter with color coding
+	jitter := m.Network.AvgJitter
+	jitterStr := f.formatDuration(time.Duration(jitter * float64(time.Millisecond)))
+	if f.ShowColors {
+		if jitter < 20 {
+			jitterStr = f.terminal.Green(jitterStr)
+		} else if jitter < 50 {
+			jitterStr = f.terminal.Yellow(jitterStr)
+		} else {
+			jitterStr = f.terminal.Red(jitterStr)
+		}
+	}
+	sb.WriteString(fmt.Sprintf("  Jitter     : %s\n", jitterStr))
+	
+	if f.DetailedView {
+		// Network latency percentiles
+		sb.WriteString(fmt.Sprintf("  Net Lat P50: %s\n", f.formatDuration(time.Duration(m.Network.LatencyP50 * float64(time.Millisecond)))))
+		sb.WriteString(fmt.Sprintf("  Net Lat P95: %s\n", f.formatDuration(time.Duration(m.Network.LatencyP95 * float64(time.Millisecond)))))
+		sb.WriteString(fmt.Sprintf("  Net Lat P99: %s\n", f.formatDuration(time.Duration(m.Network.LatencyP99 * float64(time.Millisecond)))))
+		
+		// Hop count
+		if m.Network.AvgHopCount > 0 {
+			sb.WriteString(fmt.Sprintf("  Avg Hops   : %.1f\n", m.Network.AvgHopCount))
+		}
+		
+		// Packet statistics
+		sb.WriteString(fmt.Sprintf("  Packets    : Sent %s, Recv %s\n", 
+			f.formatNumber(m.Network.PacketsSent),
+			f.formatNumber(m.Network.PacketsReceived)))
 	}
 	sb.WriteString("\n")
 }
@@ -303,13 +429,71 @@ func (f *CLIFormatter) getResponseCodeString(code int) string {
 }
 
 func (f *CLIFormatter) ClearScreen() string {
-	return f.terminal.Clear()
+	return f.safeTerminalOp(f.terminal.Clear)
 }
 
 func (f *CLIFormatter) MoveCursorToTop() string {
-	return f.terminal.MoveCursor(0, 0)
+	return f.safeTerminalOp(func() string { return f.terminal.MoveCursor(0, 0) })
 }
 
 func (f *CLIFormatter) Terminal() *Terminal {
 	return f.terminal
+}
+
+// Helper functions for safe operations
+
+func (f *CLIFormatter) safeDivide(numerator, denominator float64) float64 {
+	if denominator == 0 || math.IsNaN(denominator) || math.IsInf(denominator, 0) {
+		return 0
+	}
+	result := numerator / denominator
+	if math.IsNaN(result) || math.IsInf(result, 0) {
+		return 0
+	}
+	return result
+}
+
+func (f *CLIFormatter) safePercentage(value float64) float64 {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return 0
+	}
+	if value < 0 {
+		return 0
+	}
+	if value > 100 {
+		return 100
+	}
+	return value
+}
+
+func (f *CLIFormatter) safeLatencyDuration(milliseconds float64) time.Duration {
+	if math.IsNaN(milliseconds) || math.IsInf(milliseconds, 0) || milliseconds < 0 {
+		return 0
+	}
+	// Cap at 1 hour to prevent overflow
+	if milliseconds > 3600000 {
+		milliseconds = 3600000
+	}
+	return time.Duration(milliseconds * float64(time.Millisecond))
+}
+
+func (f *CLIFormatter) safeQPS(qps float64) float64 {
+	if math.IsNaN(qps) || math.IsInf(qps, 0) || qps < 0 {
+		return 0
+	}
+	return qps
+}
+
+func (f *CLIFormatter) safeTerminalOp(op func() string) string {
+	defer func() {
+		if r := recover(); r != nil {
+			// Terminal operation failed, return empty string
+		}
+	}()
+	
+	if f.terminal == nil {
+		return ""
+	}
+	
+	return op()
 }

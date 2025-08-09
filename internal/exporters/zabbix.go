@@ -176,6 +176,14 @@ func (z *ZabbixExporter) mapMetricsToItems(m *metrics.Metrics) ([]ZabbixItem, er
 	queryTypeItems := mapQueryTypeMetrics(m, z.config.HostName, z.config.ItemPrefix, timestamp)
 	items = append(items, queryTypeItems...)
 	
+	// Map cache metrics
+	cacheItems := mapCacheMetrics(m, z.config.HostName, z.config.ItemPrefix, timestamp)
+	items = append(items, cacheItems...)
+	
+	// Map network metrics
+	networkItems := mapNetworkMetrics(m, z.config.HostName, z.config.ItemPrefix, timestamp)
+	items = append(items, networkItems...)
+	
 	return items, nil
 }
 

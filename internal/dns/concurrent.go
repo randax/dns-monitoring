@@ -128,7 +128,29 @@ func (wp *WorkerPool) executeQueryWithRetry(ctx context.Context, job queryJob) R
 			}
 		}
 		
-		queryCtx, cancel := context.WithTimeout(ctx, timeout)
+		// Create a context with the minimum of parent deadline and configured timeout
+		var queryCtx context.Context
+		var cancel context.CancelFunc
+		
+		// Calculate the deadline for this query
+		queryDeadline := time.Now().Add(timeout)
+		
+		// Check if parent context has a deadline
+		if parentDeadline, hasDeadline := ctx.Deadline(); hasDeadline {
+			// Use the earlier of the two deadlines
+			if parentDeadline.Before(queryDeadline) {
+				// Parent deadline is earlier, use parent context directly
+				queryCtx = ctx
+				cancel = func() {} // No-op cancel since we're not creating a new context
+			} else {
+				// Query timeout is earlier, create new context with timeout
+				queryCtx, cancel = context.WithTimeout(ctx, timeout)
+			}
+		} else {
+			// Parent has no deadline, create context with query timeout
+			queryCtx, cancel = context.WithTimeout(ctx, timeout)
+		}
+		
 		start := time.Now()
 		
 		err := wp.performQuery(queryCtx, job, &result)
@@ -151,15 +173,20 @@ func (wp *WorkerPool) executeQueryWithRetry(ctx context.Context, job queryJob) R
 func (wp *WorkerPool) performQuery(ctx context.Context, job queryJob, result *Result) error {
 	switch result.Protocol {
 	case ProtocolUDP:
-		return queryUDP(ctx, job.server, job.domain, job.qtype, result)
+		return queryUDP(ctx, job.server, job.domain, job.qtype, result, wp.cfg)
 	case ProtocolTCP:
-		return queryTCP(ctx, job.server, job.domain, job.qtype, result)
+		return queryTCP(ctx, job.server, job.domain, job.qtype, result, wp.cfg)
 	case ProtocolDoT:
-		return queryDoT(ctx, job.server, job.domain, job.qtype, result)
+		return queryDoT(ctx, job.server, job.domain, job.qtype, result, wp.cfg)
 	case ProtocolDoH:
-		return queryDoH(ctx, job.server, job.domain, job.qtype, result)
+		// DoHMethod is normalized to uppercase in config validation
+		if job.server.DoHMethod == "GET" {
+			return queryDoHGet(ctx, job.server, job.domain, job.qtype, result, wp.cfg)
+		}
+		// Default to POST method (including when DoHMethod is "POST" or empty)
+		return queryDoH(ctx, job.server, job.domain, job.qtype, result, wp.cfg)
 	default:
-		return queryUDP(ctx, job.server, job.domain, job.qtype, result)
+		return queryUDP(ctx, job.server, job.domain, job.qtype, result, wp.cfg)
 	}
 }
 

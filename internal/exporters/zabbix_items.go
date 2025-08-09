@@ -344,6 +344,186 @@ func mapQueryTypeMetrics(m *metrics.Metrics, hostname, prefix string, timestamp 
 	return items
 }
 
+func mapCacheMetrics(m *metrics.Metrics, hostname, prefix string, timestamp int64) []ZabbixItem {
+	var items []ZabbixItem
+	
+	// Cache hit rate (convert to percentage 0-100)
+	if m.Cache != nil {
+		cacheHitRate := m.Cache.HitRate * 100
+		if !math.IsNaN(cacheHitRate) && !math.IsInf(cacheHitRate, 0) {
+			items = append(items, ZabbixItem{
+				Host:  hostname,
+				Key:   fmt.Sprintf("%s.cache.hit_rate", prefix),
+				Value: formatFloat(cacheHitRate),
+				Clock: timestamp,
+			})
+		}
+		
+		// Cache efficiency score (0-100)
+		cacheEfficiency := m.Cache.Efficiency * 100
+		if !math.IsNaN(cacheEfficiency) && !math.IsInf(cacheEfficiency, 0) {
+			items = append(items, ZabbixItem{
+				Host:  hostname,
+				Key:   fmt.Sprintf("%s.cache.efficiency", prefix),
+				Value: formatFloat(cacheEfficiency),
+				Clock: timestamp,
+			})
+		}
+		
+		// Average TTL
+		if !math.IsNaN(m.Cache.AvgTTL) && !math.IsInf(m.Cache.AvgTTL, 0) {
+			items = append(items, ZabbixItem{
+				Host:  hostname,
+				Key:   fmt.Sprintf("%s.cache.avg_ttl", prefix),
+				Value: formatFloat(m.Cache.AvgTTL),
+				Clock: timestamp,
+			})
+		}
+		
+		// Min TTL
+		if !math.IsNaN(m.Cache.MinTTL) && !math.IsInf(m.Cache.MinTTL, 0) {
+			items = append(items, ZabbixItem{
+				Host:  hostname,
+				Key:   fmt.Sprintf("%s.cache.min_ttl", prefix),
+				Value: formatFloat(m.Cache.MinTTL),
+				Clock: timestamp,
+			})
+		}
+		
+		// Max TTL
+		if !math.IsNaN(m.Cache.MaxTTL) && !math.IsInf(m.Cache.MaxTTL, 0) {
+			items = append(items, ZabbixItem{
+				Host:  hostname,
+				Key:   fmt.Sprintf("%s.cache.max_ttl", prefix),
+				Value: formatFloat(m.Cache.MaxTTL),
+				Clock: timestamp,
+			})
+		}
+		
+		// Total cacheable queries
+		items = append(items, ZabbixItem{
+			Host:  hostname,
+			Key:   fmt.Sprintf("%s.cache.queries_total", prefix),
+			Value: fmt.Sprintf("%d", m.Cache.TotalCacheableQueries),
+			Clock: timestamp,
+		})
+		
+		// Cache hits
+		items = append(items, ZabbixItem{
+			Host:  hostname,
+			Key:   fmt.Sprintf("%s.cache.hits", prefix),
+			Value: fmt.Sprintf("%d", m.Cache.Hits),
+			Clock: timestamp,
+		})
+		
+		// Cache misses
+		items = append(items, ZabbixItem{
+			Host:  hostname,
+			Key:   fmt.Sprintf("%s.cache.misses", prefix),
+			Value: fmt.Sprintf("%d", m.Cache.Misses),
+			Clock: timestamp,
+		})
+	}
+	
+	return items
+}
+
+func mapNetworkMetrics(m *metrics.Metrics, hostname, prefix string, timestamp int64) []ZabbixItem {
+	var items []ZabbixItem
+	
+	// Network metrics
+	if m.Network != nil {
+		// Packet loss (convert to percentage 0-100)
+		packetLoss := m.Network.PacketLoss * 100
+		if !math.IsNaN(packetLoss) && !math.IsInf(packetLoss, 0) {
+			items = append(items, ZabbixItem{
+				Host:  hostname,
+				Key:   fmt.Sprintf("%s.network.packet_loss", prefix),
+				Value: formatFloat(packetLoss),
+				Clock: timestamp,
+			})
+		}
+		
+		// Network quality score (0-100)
+		if !math.IsNaN(m.Network.QualityScore) && !math.IsInf(m.Network.QualityScore, 0) {
+			items = append(items, ZabbixItem{
+				Host:  hostname,
+				Key:   fmt.Sprintf("%s.network.quality_score", prefix),
+				Value: formatFloat(m.Network.QualityScore),
+				Clock: timestamp,
+			})
+		}
+		
+		// Average jitter
+		if !math.IsNaN(m.Network.AvgJitter) && !math.IsInf(m.Network.AvgJitter, 0) {
+			items = append(items, ZabbixItem{
+				Host:  hostname,
+				Key:   fmt.Sprintf("%s.network.jitter_avg", prefix),
+				Value: formatFloat(m.Network.AvgJitter),
+				Clock: timestamp,
+			})
+		}
+		
+		// Network latency P50
+		if !math.IsNaN(m.Network.LatencyP50) && !math.IsInf(m.Network.LatencyP50, 0) {
+			items = append(items, ZabbixItem{
+				Host:  hostname,
+				Key:   fmt.Sprintf("%s.network.latency_p50", prefix),
+				Value: formatFloat(m.Network.LatencyP50),
+				Clock: timestamp,
+			})
+		}
+		
+		// Network latency P95
+		if !math.IsNaN(m.Network.LatencyP95) && !math.IsInf(m.Network.LatencyP95, 0) {
+			items = append(items, ZabbixItem{
+				Host:  hostname,
+				Key:   fmt.Sprintf("%s.network.latency_p95", prefix),
+				Value: formatFloat(m.Network.LatencyP95),
+				Clock: timestamp,
+			})
+		}
+		
+		// Network latency P99
+		if !math.IsNaN(m.Network.LatencyP99) && !math.IsInf(m.Network.LatencyP99, 0) {
+			items = append(items, ZabbixItem{
+				Host:  hostname,
+				Key:   fmt.Sprintf("%s.network.latency_p99", prefix),
+				Value: formatFloat(m.Network.LatencyP99),
+				Clock: timestamp,
+			})
+		}
+		
+		// Average hop count
+		if m.Network.AvgHopCount > 0 {
+			items = append(items, ZabbixItem{
+				Host:  hostname,
+				Key:   fmt.Sprintf("%s.network.hop_count_avg", prefix),
+				Value: formatFloat(m.Network.AvgHopCount),
+				Clock: timestamp,
+			})
+		}
+		
+		// Total packets sent
+		items = append(items, ZabbixItem{
+			Host:  hostname,
+			Key:   fmt.Sprintf("%s.network.packets_sent", prefix),
+			Value: fmt.Sprintf("%d", m.Network.PacketsSent),
+			Clock: timestamp,
+		})
+		
+		// Total packets received
+		items = append(items, ZabbixItem{
+			Host:  hostname,
+			Key:   fmt.Sprintf("%s.network.packets_received", prefix),
+			Value: fmt.Sprintf("%d", m.Network.PacketsReceived),
+			Clock: timestamp,
+		})
+	}
+	
+	return items
+}
+
 func formatFloat(value float64) string {
 	// Handle special cases
 	if math.IsNaN(value) {

@@ -16,16 +16,31 @@ const (
 )
 
 type Result struct {
-	Server       string        `json:"server"`
-	Domain       string        `json:"domain"`
-	QueryType    string        `json:"query_type"`
-	Protocol     Protocol      `json:"protocol"`
-	Duration     time.Duration `json:"duration"`
-	ResponseCode int           `json:"response_code"`
-	Error        error         `json:"error,omitempty"`
-	Timestamp    time.Time     `json:"timestamp"`
-	Answers      []string      `json:"answers,omitempty"`
-	Retries      int           `json:"retries"`
+	Server       string           `json:"server"`
+	Domain       string           `json:"domain"`
+	QueryType    string           `json:"query_type"`
+	Protocol     Protocol         `json:"protocol"`
+	Duration     time.Duration    `json:"duration"`
+	ResponseCode int              `json:"response_code"`
+	Error        error            `json:"error,omitempty"`
+	Timestamp    time.Time        `json:"timestamp"`
+	Answers      []string         `json:"answers,omitempty"`
+	Retries      int              `json:"retries"`
+	Extra        interface{}      `json:"-"`
+	
+	// Cache performance fields
+	CacheHit         bool          `json:"cache_hit,omitempty"`
+	CacheAge         time.Duration `json:"cache_age,omitempty"`
+	TTL              time.Duration `json:"ttl,omitempty"`
+	CacheEfficiency  float64       `json:"cache_efficiency,omitempty"`
+	RecursiveServer  bool          `json:"recursive_server,omitempty"`
+	
+	// Network-level metrics fields
+	PacketLoss      float64       `json:"packet_loss,omitempty"`
+	Jitter          time.Duration `json:"jitter,omitempty"`
+	NetworkLatency  time.Duration `json:"network_latency,omitempty"`
+	HopCount        int           `json:"hop_count,omitempty"`
+	NetworkQuality  float64       `json:"network_quality,omitempty"`
 }
 
 func StringToQueryType(qtype string) uint16 {

@@ -1,3 +1,20 @@
+// Package exporters provides data export functionality for monitoring metrics.
+//
+// ZabbixBatcher implements batching and retry logic for sending metrics to Zabbix.
+// 
+// Partial Failure Handling:
+// When Zabbix reports partial failures (some items accepted, some rejected), this
+// implementation takes a conservative approach by treating partial failures as 
+// complete failures. This ensures data consistency and prevents silent data loss.
+// All items in a partially failed batch will be retried together or moved to the
+// dead letter queue as a unit. This approach prioritizes data integrity over 
+// partial success optimization.
+//
+// Future Enhancement:
+// For item-level tracking, consider implementing:
+// - Individual item retry queues with failure counters
+// - Item-level dead letter queue with failure reasons
+// - Selective retry of only failed items from partial failures
 package exporters
 
 import (
@@ -7,8 +24,13 @@ import (
 	"time"
 )
 
+// ZabbixSenderInterface defines the interface for sending data to Zabbix
+type ZabbixSenderInterface interface {
+	SendBatch(items []ZabbixItem) (*ZabbixResponse, error)
+}
+
 type ZabbixBatcher struct {
-	sender        *ZabbixSender
+	sender        ZabbixSenderInterface
 	batchSize     int
 	retryAttempts int
 	retryDelay    time.Duration
@@ -32,7 +54,7 @@ type ZabbixBatcher struct {
 	maxDLQSize      int
 }
 
-func NewZabbixBatcher(sender *ZabbixSender, batchSize, retryAttempts int, retryDelay time.Duration) *ZabbixBatcher {
+func NewZabbixBatcher(sender ZabbixSenderInterface, batchSize, retryAttempts int, retryDelay time.Duration) *ZabbixBatcher {
 	return &ZabbixBatcher{
 		sender:          sender,
 		batchSize:       batchSize,
@@ -159,8 +181,16 @@ func (b *ZabbixBatcher) flushUnlocked() error {
 	return nil
 }
 
+// sendWithRetry attempts to send items to Zabbix with retry logic.
+// 
+// Partial failures (where some items succeed and others fail) are treated as
+// complete failures to ensure data consistency. This means all items will be
+// retried together or moved to the dead letter queue as a unit.
+//
+// Returns nil only when ALL items are successfully sent to Zabbix.
 func (b *ZabbixBatcher) sendWithRetry(items []ZabbixItem) error {
 	var lastErr error
+	itemCount := len(items)
 	
 	for attempt := 0; attempt <= b.retryAttempts; attempt++ {
 		if attempt > 0 {
@@ -170,29 +200,49 @@ func (b *ZabbixBatcher) sendWithRetry(items []ZabbixItem) error {
 				delay = 30 * time.Second
 			}
 			time.Sleep(delay)
-			log.Printf("Retrying Zabbix send (attempt %d/%d)", attempt, b.retryAttempts)
+			log.Printf("Retrying Zabbix send (attempt %d/%d) for %d items", attempt, b.retryAttempts, itemCount)
 		}
 		
 		response, err := b.sender.SendBatch(items)
 		if err == nil && response != nil {
 			// Check if all items were accepted
 			if response.Failed == 0 {
+				log.Printf("Zabbix send successful: %d items sent", response.Success)
 				return nil
 			}
 			
-			// Partial failure
-			log.Printf("Zabbix partial failure: %d succeeded, %d failed", response.Success, response.Failed)
-			if response.Failed < len(items) {
-				// Consider it a success if at least some items were sent
-				return nil
+			// Partial failure handling - safer approach: treat as complete failure
+			// This ensures data consistency and prevents silent data loss
+			percentFailed := float64(response.Failed) / float64(itemCount) * 100
+			log.Printf("WARN: Zabbix partial failure detected - treating as complete failure for data consistency")
+			log.Printf("  Items sent: %d, Succeeded: %d, Failed: %d (%.1f%%)", 
+				itemCount, response.Success, response.Failed, percentFailed)
+			if response.Info != "" {
+				log.Printf("  Failure info: %s", response.Info)
 			}
+			log.Printf("  NOTE: All %d items will be retried or moved to dead letter queue", itemCount)
 			
-			lastErr = fmt.Errorf("all items failed: %s", response.Info)
+			// Create detailed error for partial failure
+			lastErr = fmt.Errorf("partial failure: %d/%d items failed (%.1f%%): %s", 
+				response.Failed, itemCount, percentFailed, response.Info)
+			
+			// Continue retrying with all items to ensure consistency
 		} else {
-			lastErr = err
+			// Complete network/protocol failure
+			if err != nil {
+				log.Printf("ERROR: Zabbix send failed completely (attempt %d/%d): %v", 
+					attempt+1, b.retryAttempts+1, err)
+				lastErr = err
+			} else {
+				log.Printf("ERROR: Zabbix send failed with nil response (attempt %d/%d)", 
+					attempt+1, b.retryAttempts+1)
+				lastErr = fmt.Errorf("nil response from Zabbix server")
+			}
 		}
 	}
 	
+	log.Printf("ERROR: Failed to send %d items after %d retries: %v", 
+		itemCount, b.retryAttempts+1, lastErr)
 	return fmt.Errorf("failed after %d retries: %w", b.retryAttempts, lastErr)
 }
 

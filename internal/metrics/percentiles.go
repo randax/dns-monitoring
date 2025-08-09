@@ -52,8 +52,18 @@ func calculatePercentile(sortedData []float64, percentile float64) float64 {
 		return 0
 	}
 	
+	if percentile < 0 {
+		percentile = 0
+	} else if percentile > 100 {
+		percentile = 100
+	}
+	
 	if len(sortedData) == 1 {
 		return sortedData[0]
+	}
+	
+	if percentile == 100 {
+		return sortedData[len(sortedData)-1]
 	}
 	
 	rank := percentile / 100.0 * float64(len(sortedData)-1)
