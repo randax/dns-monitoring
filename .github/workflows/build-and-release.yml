@@ -29,42 +29,14 @@ jobs:
     strategy:
       matrix:
         include:
-          # Linux builds
+          # Linux builds - only amd64 with native compilation support
           - os: linux
             arch: amd64
             suffix: ''
-          - os: linux
-            arch: arm64
-            suffix: ''
-          - os: linux
-            arch: arm
-            arm: '7'
-            suffix: ''
           
-          # Windows builds
-          - os: windows
-            arch: amd64
-            suffix: '.exe'
-          - os: windows
-            arch: arm64
-            suffix: '.exe'
-          
-          # macOS builds
-          - os: darwin
-            arch: amd64
-            suffix: ''
-          - os: darwin
-            arch: arm64
-            suffix: ''
-          
-          # FreeBSD builds
-          - os: freebsd
-            arch: amd64
-            suffix: ''
-          # FreeBSD ARM64 disabled due to pcap cross-compilation issues
-          # - os: freebsd
-          #   arch: arm64
-          #   suffix: ''
+          # Note: Cross-compilation with CGO for other architectures requires
+          # proper toolchains and libraries which are complex to set up in CI.
+          # Users can build from source for their specific architecture.
 
     steps:
       - name: Checkout code
@@ -82,6 +54,12 @@ jobs:
         run: |
           go mod download
           go mod verify
+
+      - name: Install build dependencies for Linux
+        if: matrix.os == 'linux' && matrix.arch == 'amd64'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libpcap-dev
 
       - name: Set build variables
         id: vars
@@ -119,9 +97,10 @@ jobs:
         env:
           GOOS: ${{ matrix.os }}
           GOARCH: ${{ matrix.arch }}
-          GOARM: ${{ matrix.arm }}
-          CGO_ENABLED: 0
+          CGO_ENABLED: 1
         run: |
+          echo "Building for ${{ matrix.os }}/${{ matrix.arch }} with CGO_ENABLED=1"
+          
           # Build with version information
           go build -v \
             -ldflags="-s -w \
@@ -242,11 +221,22 @@ jobs:
           
           ## Release Highlights
           
-          This release includes binaries for multiple platforms:
-          - Linux (amd64, arm64, armv7)
-          - Windows (amd64, arm64)
-          - macOS (amd64, arm64)
-          - FreeBSD (amd64)
+          ### Native Binaries
+          This release includes native binaries for:
+          - Linux (amd64)
+          
+          ### Docker Images (Recommended for Multi-Architecture)
+          Multi-architecture Docker images are available for:
+          - Linux (amd64, arm64, arm/v7)
+          
+          Use Docker for the easiest deployment across different architectures:
+          \`\`\`bash
+          docker pull ghcr.io/${{ github.repository_owner }}/dns-monitor:${VERSION}
+          \`\`\`
+          
+          ### Building from Source
+          For other platforms, please build from source.
+          Building requires libpcap-dev (Linux) or libpcap (macOS/FreeBSD).
           
           ## Installation
           
@@ -308,8 +298,7 @@ jobs:
           generate_release_notes: true
 
   docker:
-    name: Build and Push Docker Image
-    needs: build
+    name: Build and Push Multi-Arch Docker Images
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event.inputs.release_version != ''
     permissions:
@@ -347,10 +336,11 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix={{branch}}-,format=short
 
-      - name: Build and push Docker image
+      - name: Build and push multi-arch Docker images
         uses: docker/build-push-action@v5
         with:
           context: .
+          file: ./Dockerfile.multiarch
           platforms: linux/amd64,linux/arm64,linux/arm/v7
           push: true
           tags: ${{ steps.meta.outputs.tags }}
