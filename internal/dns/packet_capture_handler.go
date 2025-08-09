@@ -45,6 +45,7 @@ type InterfaceStats struct {
 	PacketsProcessed uint64
 	LastUpdate       time.Time
 	Active           bool
+	mu               sync.RWMutex // Protects concurrent access to stats
 }
 
 type interfaceHandle struct {
@@ -269,13 +270,17 @@ func (pch *packetCaptureHandler) GetInterfaceStats(ifaceName string) (*Interface
 		return nil, fmt.Errorf("interface %s not found", ifaceName)
 	}
 
-	// Use atomic loads for fields that are atomically written
+	// Lock the stats for reading
+	iface.stats.mu.RLock()
+	defer iface.stats.mu.RUnlock()
+	
+	// Create a copy of the stats
 	statsCopy := InterfaceStats{
 		Interface:        iface.stats.Interface,
-		PacketsReceived:  atomic.LoadUint64(&iface.stats.PacketsReceived),
-		PacketsDropped:   atomic.LoadUint64(&iface.stats.PacketsDropped),
-		PacketsIfDropped: atomic.LoadUint64(&iface.stats.PacketsIfDropped),
-		PacketsProcessed: atomic.LoadUint64(&iface.stats.PacketsProcessed),
+		PacketsReceived:  iface.stats.PacketsReceived,
+		PacketsDropped:   iface.stats.PacketsDropped,
+		PacketsIfDropped: iface.stats.PacketsIfDropped,
+		PacketsProcessed: iface.stats.PacketsProcessed,
 		LastUpdate:       iface.stats.LastUpdate,
 		Active:           iface.stats.Active,
 	}
@@ -338,7 +343,10 @@ func (pch *packetCaptureHandler) captureFromInterface(ctx context.Context, iface
 			}
 			return
 		case packet := <-localChan:
-			atomic.AddUint64(&iface.stats.PacketsProcessed, 1)
+			// Increment packets processed counter with lock
+			iface.stats.mu.Lock()
+			iface.stats.PacketsProcessed++
+			iface.stats.mu.Unlock()
 
 			if pch.config.OnPacketHooks.OnPacketReceived != nil {
 				pch.config.OnPacketHooks.OnPacketReceived()
@@ -349,7 +357,9 @@ func (pch *packetCaptureHandler) captureFromInterface(ctx context.Context, iface
 			case <-ctx.Done():
 				return
 			default:
-				atomic.AddUint64(&iface.stats.PacketsDropped, 1)
+				iface.stats.mu.Lock()
+				iface.stats.PacketsDropped++
+				iface.stats.mu.Unlock()
 				if pch.config.OnPacketHooks.OnPacketDropped != nil {
 					pch.config.OnPacketHooks.OnPacketDropped()
 				}
@@ -383,10 +393,13 @@ func (pch *packetCaptureHandler) statsAggregator() {
 			pch.mu.RUnlock()
 
 			if exists && update.stats != nil {
-				atomic.StoreUint64(&iface.stats.PacketsReceived, uint64(update.stats.PacketsReceived))
-				atomic.StoreUint64(&iface.stats.PacketsDropped, uint64(update.stats.PacketsDropped))
-				atomic.StoreUint64(&iface.stats.PacketsIfDropped, uint64(update.stats.PacketsIfDropped))
+				// Lock the stats for writing
+				iface.stats.mu.Lock()
+				iface.stats.PacketsReceived = uint64(update.stats.PacketsReceived)
+				iface.stats.PacketsDropped = uint64(update.stats.PacketsDropped)
+				iface.stats.PacketsIfDropped = uint64(update.stats.PacketsIfDropped)
 				iface.stats.LastUpdate = time.Now()
+				iface.stats.mu.Unlock()
 			}
 		}
 	}
