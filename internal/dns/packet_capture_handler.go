@@ -269,7 +269,16 @@ func (pch *packetCaptureHandler) GetInterfaceStats(ifaceName string) (*Interface
 		return nil, fmt.Errorf("interface %s not found", ifaceName)
 	}
 
-	statsCopy := *iface.stats
+	// Use atomic loads for fields that are atomically written
+	statsCopy := InterfaceStats{
+		Interface:        iface.stats.Interface,
+		PacketsReceived:  atomic.LoadUint64(&iface.stats.PacketsReceived),
+		PacketsDropped:   atomic.LoadUint64(&iface.stats.PacketsDropped),
+		PacketsIfDropped: atomic.LoadUint64(&iface.stats.PacketsIfDropped),
+		PacketsProcessed: atomic.LoadUint64(&iface.stats.PacketsProcessed),
+		LastUpdate:       iface.stats.LastUpdate,
+		Active:           iface.stats.Active,
+	}
 	return &statsCopy, nil
 }
 

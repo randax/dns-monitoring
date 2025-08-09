@@ -50,7 +50,9 @@ func TestTCPStreamReassembly(t *testing.T) {
 
 func TestTCPBufferManager(t *testing.T) {
 	bm := &TCPBufferManager{
-		buffers: make(map[string]*StreamBuffer),
+		buffers:       make(map[string]*StreamBuffer),
+		maxBuffers:    100,
+		maxBufferSize: 65536,
 	}
 
 	t.Run("store_and_retrieve_buffer", func(t *testing.T) {

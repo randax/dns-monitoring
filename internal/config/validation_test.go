@@ -95,7 +95,7 @@ func TestPrometheusValidation(t *testing.T) {
 				},
 			},
 			wantError: true,
-			errorMsg:  "must be at least 100ms",
+			errorMsg:  "Prometheus update interval too low",
 		},
 		{
 			name: "invalid metric prefix starting with number",
@@ -116,7 +116,7 @@ func TestPrometheusValidation(t *testing.T) {
 				},
 			},
 			wantError: true,
-			errorMsg:  "must start with a letter or underscore",
+			errorMsg:  "Invalid Prometheus metric prefix",
 		},
 		{
 			name: "metric prefix starting with underscore allowed",
