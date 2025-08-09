@@ -21,7 +21,7 @@ func NewEngine(cfg *config.Config) *Engine {
 	
 	// Initialize analyzers if enabled
 	if cfg.Cache.Enabled {
-		e.cacheAnalyzer = NewCacheAnalyzer()
+		e.cacheAnalyzer = NewCacheAnalyzer(&cfg.Cache)
 	}
 	
 	if cfg.Network.Enabled {

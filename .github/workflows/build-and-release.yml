@@ -61,9 +61,10 @@ jobs:
           - os: freebsd
             arch: amd64
             suffix: ''
-          - os: freebsd
-            arch: arm64
-            suffix: ''
+          # FreeBSD ARM64 disabled due to pcap cross-compilation issues
+          # - os: freebsd
+          #   arch: arm64
+          #   suffix: ''
 
     steps:
       - name: Checkout code
@@ -245,7 +246,7 @@ jobs:
           - Linux (amd64, arm64, armv7)
           - Windows (amd64, arm64)
           - macOS (amd64, arm64)
-          - FreeBSD (amd64, arm64)
+          - FreeBSD (amd64)
           
           ## Installation
           

@@ -48,7 +48,7 @@ func NewPassiveEngine(cfg *config.Config) (*PassiveEngine, error) {
 	
 	// Initialize analyzers if enabled
 	if cfg.Cache.Enabled {
-		pe.cacheAnalyzer = NewCacheAnalyzer()
+		pe.cacheAnalyzer = NewCacheAnalyzer(&cfg.Cache)
 	}
 	
 	if cfg.Network.Enabled {
